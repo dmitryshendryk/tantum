@@ -19,5 +19,5 @@ if __name__ == "__main__":
         include_package_data=True,
         install_requires=["torch>=1.6.0"],
         platforms=["linux", "unix"],
-        python_requires=">3.7.2",
+        python_requires=">3.6.2",
     )
