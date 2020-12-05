@@ -11,7 +11,7 @@ if __name__ == "__main__":
         description="tantum - train pytorch models",
         long_description=long_description,
         long_description_content_type="text/markdown",
-        author="Dmitry Shendryj",
+        author="Dmitry Shendryk",
         author_email="dmitryshendryk@gmail.com",
         url="https://github.com/dmitryshendryk/tantum",
         license="Apache License",
