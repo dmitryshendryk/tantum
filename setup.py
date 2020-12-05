@@ -7,7 +7,7 @@ with open("README.md") as f:
 if __name__ == "__main__":
     setup(
         name="tantum",
-        version="0.0.1",
+        version="0.0.4",
         description="tantum - train pytorch models",
         long_description=long_description,
         long_description_content_type="text/markdown",
@@ -18,6 +18,5 @@ if __name__ == "__main__":
         packages=find_packages(),
         include_package_data=True,
         install_requires=["torch>=1.6.0"],
-        platforms=["linux", "unix"],
         python_requires=">3.6.2",
     )
