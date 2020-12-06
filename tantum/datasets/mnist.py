@@ -3,7 +3,7 @@
 import torch
 import numpy as np
 
-class GenericDataset:
+class MnistDataset:
     def __init__(self, data, targets, dtypes, transform):
         self.data = data
         self.targets = targets
