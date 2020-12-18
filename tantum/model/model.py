@@ -293,6 +293,7 @@ class Model(nn.Module):
             self.train_state = enums.TrainingState.TRAIN_EPOCH_START
             train_loss = self.train_one_epoch(self.train_loader, device)
             self.train_state = enums.TrainingState.TRAIN_EPOCH_END
+            valid_loss = None
             if self.valid_loader:
                 self.train_state = enums.TrainingState.VALID_EPOCH_START
                 valid_loss = self.validate_one_epoch(self.valid_loader, device)
@@ -302,7 +303,7 @@ class Model(nn.Module):
                     if self.step_scheduler_metric is None:
                         self.scheduler.step()
                     else:
-                        self.scheduler.step(self.step_scheduler_metric)
+                        self.scheduler.step(valid_loss)
             self.train_state = enums.TrainingState.EPOCH_END
             if self._model_state.value == "end":
                 break
