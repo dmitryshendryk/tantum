@@ -7,7 +7,7 @@ with open("README.md") as f:
 if __name__ == "__main__":
     setup(
         name="tantum",
-        version="0.0.7",
+        version="0.0.9",
         description="tantum - train pytorch models",
         long_description=long_description,
         long_description_content_type="text/markdown",

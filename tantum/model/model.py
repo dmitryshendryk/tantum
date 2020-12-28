@@ -84,7 +84,7 @@ class Model(nn.Module):
                 train_dataset,
                 batch_size=train_bs,
                 num_workers=n_jobs,
-                sampler=valid_sampler,
+                sampler=train_sampler,
                 shuffle=True,
             )
         if self.valid_loader is None:
