@@ -41,12 +41,12 @@ class CFG:
     trn_fold=[0] #[0, 1, 2, 3, 4]
     train=True
     smoothing=0.05
-    t1=0.3 # bi-tempered-loss https://www.kaggle.com/c/cassava-leaf-disease-classification/discussion/202017
-    t2=1.0 # bi-tempered-loss https://www.kaggle.com/c/cassava-leaf-disease-classification/discussion/202017
-    swa_start = 5
-    swa = True
-    cutmix=False
-    fmix=False
+    t1=0.3 # bi-tempered-loss 
+    t2=1.0 # bi-tempered-loss 
+    swa_start = 5                        # when start swa
+    swa = True                           # stochastik weighted average
+    cutmix=False                         # aug cutmix
+    fmix=False                           # aug fmix
 ```
 
 
