@@ -3,7 +3,6 @@ import numpy as np
 
 import torch
 from torch.cuda.amp import autocast, GradScaler
-import torch_xla.core.xla_model as xm
 
 from tantum.utils.metrics import AverageMeter, timeSince
 from tantum.utils.augmentation import cutmix, fmix
@@ -11,12 +10,13 @@ from tantum.utils.augmentation import cutmix, fmix
 
 class Trainer():
 
-    def __init__(self, model, criterion, optimizer, scheduler) -> None:
+    def __init__(self, model, criterion, optimizer, scheduler, xm=None) -> None:
 
         self.model = model 
         self.criterion = criterion
         self.optimizer = optimizer
         self.scheduler = scheduler
+        self.xm = xm
 
 
     def fit(self, cfg, train_loader,  epoch, device, fold):
@@ -73,7 +73,7 @@ class Trainer():
                 loss.backward()
                 grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
                 if (step + 1) % cfg.gradient_accumulation_steps == 0:
-                    xm.optimizer_step(self.optimizer, barrier=True)
+                    self.xm.optimizer_step(self.optimizer, barrier=True)
                     self.optimizer.zero_grad()
                     global_step += 1
             # measure elapsed time
@@ -98,7 +98,7 @@ class Trainer():
                         ))
             elif cfg.device == 'TPU':
                 if step % cfg.print_freq == 0 or step == (len(train_loader)-1):
-                    xm.master_print('Epoch: [{0}][{1}/{2}] '
+                    self.xm.master_print('Epoch: [{0}][{1}/{2}] '
                                     'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
                                     'Elapsed {remain:s} '
                                     'Loss: {loss.val:.4f}({loss.avg:.4f}) '

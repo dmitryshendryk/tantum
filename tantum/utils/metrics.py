@@ -1,6 +1,9 @@
 import math
 import time
 
+from sklearn.metrics import accuracy_score
+
+
 class AverageMeter(object):
     """Computes and stores the average and current value"""
     def __init__(self):
@@ -31,3 +34,6 @@ def timeSince(since, percent):
     es = s / (percent)
     rs = es - s
     return '%s (remain %s)' % (asMinutes(s), asMinutes(rs))
+
+def get_score(y_true, y_pred):
+    return accuracy_score(y_true, y_pred)

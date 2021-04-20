@@ -2,7 +2,6 @@ import time
 import numpy as np
 
 import torch
-import torch_xla.core.xla_model as xm
 
 from tantum.utils.metrics import AverageMeter, timeSince
 
@@ -11,10 +10,11 @@ from tantum.utils.metrics import AverageMeter, timeSince
 
 class Evaluator():
 
-    def __init__(self, model, criterion) -> None:
+    def __init__(self, model, criterion, xm=None) -> None:
         
         self.model = model 
         self.criterion = criterion
+        self.xm = xm
 
 
     def fit(self, cfg, valid_loader, device, fold):
@@ -63,7 +63,7 @@ class Evaluator():
                         ))
             elif cfg.device == 'TPU':
                 if step % cfg.print_freq == 0 or step == (len(valid_loader)-1):
-                    xm.master_print('EVAL: [{0}/{1}] '
+                    self.xm.master_print('EVAL: [{0}/{1}] '
                                     'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
                                     'Elapsed {remain:s} '
                                     'Loss: {loss.val:.4f}({loss.avg:.4f}) '
