@@ -24,7 +24,7 @@ class MainLoop():
 
         
 
-    def train_loop(self, CFG, folds, fold, xm, pl, idist):
+    def fit(self, CFG, folds, fold, xm=None, pl=None, idist=None):
         
         LOGGER.info(f"========== fold: {fold} training ==========")
         
