@@ -4,6 +4,8 @@
 Supports GPU and TPU 
 
 ## Params
+
+```
 class CFG:
     OUTPUT_DIR = './'  # output dir of the artifacts
     TRAIN_PATH = '../input/' # input train path folder
@@ -45,6 +47,6 @@ class CFG:
     swa = True
     cutmix=False
     fmix=False
-
+```
 
 
