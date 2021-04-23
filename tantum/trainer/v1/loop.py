@@ -98,8 +98,12 @@ class MainLoop():
         # ====================================================
         # Trainer and Evaluator
         # ====================================================
-        trainer = Trainer(model, criterion, optimizer, scheduler)
-        evaluator = Evaluator(model, criterion)
+        if CFG.device == 'GPU':
+            trainer = Trainer(model, criterion, optimizer, scheduler)
+            evaluator = Evaluator(model, criterion)
+        elif CFG.device == 'TPU':
+            trainer = Trainer(model, criterion, optimizer, scheduler, xm=xm)
+            evaluator = Evaluator(model, criterion, xm=xm)
         
         
         best_score = 0.
