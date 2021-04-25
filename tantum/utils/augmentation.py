@@ -3,7 +3,7 @@ import torch
 from torch import nn
 
 import numpy as np
-from fmix import sample_mask
+from tantum.utils.fmix import sample_mask
 
 
 def rand_bbox(size, lam):
