@@ -115,3 +115,8 @@ Use from tantum.optimizer
     from tantum.optimizer import RAdam
 ```
 
+## TODO
+
+### Finding Final Ensembles
+https://www.kaggle.com/jannish/cassava-leaf-disease-finding-final-ensembles
+
