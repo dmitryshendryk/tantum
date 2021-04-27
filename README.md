@@ -122,5 +122,6 @@ https://www.kaggle.com/jannish/cassava-leaf-disease-finding-final-ensembles
 
 ## Attention
 https://github.com/TomYanabe/Cassava-Leaf-Disease-Classification/blob/master/src/modules.py
+https://github.com/ZhenxingZheng/attention-network
 
 
