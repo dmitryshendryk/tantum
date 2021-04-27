@@ -120,3 +120,7 @@ Use from tantum.optimizer
 ### Finding Final Ensembles
 https://www.kaggle.com/jannish/cassava-leaf-disease-finding-final-ensembles
 
+## Attention
+https://github.com/TomYanabe/Cassava-Leaf-Disease-Classification/blob/master/src/modules.py
+
+
