@@ -101,4 +101,9 @@ Use in CFG
     fmix=True 
     cutmix=True
 ```
+- Gradient Accumulation
 
+Use in CFG
+```
+    gradient_accumulation_steps = 1
+```
