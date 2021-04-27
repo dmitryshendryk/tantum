@@ -88,4 +88,12 @@ Use in CFG:
     warmup_epo = 1 # GradualWarmupSchedulerV2
     cosine_epo = 9 # GradualWarmupSchedulerV2  ## 19
 ```
+- Label Smoothing
+
+In in CFG 
+```
+criterion = 'LabelSmoothing' 
+
+```
+
 
