@@ -90,10 +90,15 @@ Use in CFG:
 ```
 - Label Smoothing
 
-In in CFG 
+Use in CFG 
 ```
-criterion = 'LabelSmoothing' 
-
+    criterion = 'LabelSmoothing' 
 ```
+- CutMix and FMix
 
+Use in CFG
+```
+    fmix=True 
+    cutmix=True
+```
 
