@@ -14,6 +14,38 @@ from tantum.utils.loss import get_criterion
 from tantum.utils.logger import LOGGER
 from tantum.utils.metrics import AverageMeter, timeSince
 
+# class CFG:
+#     seed=42
+#     criterion = 'CrossEntropyLoss' 
+#     n_epochs = 10
+#     device= 'GPU'
+#     fmix=False 
+#     cutmix=False
+#     lr = 0.001
+#     swa = False
+#     nprocs = 1
+#     swa_start = 5
+#     print_freq = 100
+#     scheduler = 'GradualWarmupSchedulerV2'
+#     optimizer = Adam
+#     batch_size = 100
+#     weight_decay=1e-6
+#     gradient_accumulation_steps=1
+#     max_grad_norm=1000
+#     n_fold=5
+#     target_col = 'label'
+#     trn_fold=[0,1,2,3,4] #[0, 1, 2, 3, 4]
+#     num_workers = 0
+#     freeze_epo = 0 # GradualWarmupSchedulerV2
+#     warmup_epo = 1 # GradualWarmupSchedulerV2
+#     cosine_epo = 9 # GradualWarmupSchedulerV2  ## 19
+#     OUTPUT_DIR = './'
+#     model_name = 'simple_net'
+#     optimizer_params = dict(
+#         lr=lr, 
+#         weight_decay=weight_decay, 
+#         amsgrad=False
+#     )
 
 class Fitter():
 
