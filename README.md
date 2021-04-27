@@ -107,3 +107,11 @@ Use in CFG
 ```
     gradient_accumulation_steps = 1
 ```
+
+- RAdam Optimizer
+
+Use from tantum.optimizer
+```
+    from tantum.optimizer import RAdam
+```
+
