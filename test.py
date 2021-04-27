@@ -32,6 +32,7 @@ from torch.optim import Adam, SGD
 
 
 from tantum.trainer.v1.fitter import Fitter
+from tantum.trainer.v1.mean_teacher import MeanTeacher
 
 from tantum.utils.loss import get_criterion
 from tantum.scheduler.scheduler import get_scheduler
@@ -43,6 +44,8 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 
 class CFG:
+    weight_mean_teacher = 0.2
+    alpha_mean_teacher = 0.99
     seed=42
     criterion = 'CrossEntropyLoss' 
     n_epochs = 10
@@ -157,9 +160,11 @@ class Net(nn.Module):
         return F.log_softmax(x)
 
 
-fitter = Fitter(
+
+fitter = MeanTeacher(
     cfg=CFG,
     model = Net(),
+    mean_teacher = Net(),
     device=device,
     optimizer = CFG.optimizer,
     n_epochs = 10,

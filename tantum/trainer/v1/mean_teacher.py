@@ -1,127 +1,329 @@
-from __future__ import print_function
-import torch 
-import torch.nn as nn 
+import torch
+import numpy as np 
+import time 
+from datetime import datetime
+
+from torch.cuda.amp import autocast, GradScaler
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, CosineAnnealingLR, ReduceLROnPlateau
 import torch.nn.functional as F 
-import torch.optim as optim 
-from torchvision import datasets, transforms
+
+from tantum.utils.augmentation import cutmix, fmix
+from tantum.scheduler.scheduler import  get_scheduler, GradualWarmupSchedulerV2
+from tantum.utils.metrics import get_score
+from tantum.utils.loss import get_criterion
+from tantum.utils.logger import LOGGER
+from tantum.utils.metrics import AverageMeter, timeSince
 
 
 class CFG:
-    batch_size = 64
-    test_batch_size = 100
-    epochs = 10
-    lr = 0.01
-    momentum = 0.05
-    seed = 1
-    log_interval = 100
-    device='GPU'
+    weight_mean_teacher = 0.2
+    alpha_mean_teacher = 0.99
 
+class MeanTeacher():
 
-class Net(nn.Module):
+    def __init__(
+        self, cfg, model, mean_teacher, device, optimizer, n_epochs,
+        sheduler=None, optimizer_params=None, xm = None, pl = None, idist=None
+    ) -> None:
+        self.epoch = 0
+        self.n_epochs = n_epochs
+        self.base_dir = './'
+        self.log_path = f'{self.base_dir}/log.txt'
+        self.best_summary_loss = np.inf
 
-    def __init__(self):
+        self.model = model
+        self.mean_teacher = mean_teacher
+        self.device = device
+        self.cfg = cfg
+
+        self.xm = xm 
+        self.pl = pl 
+        self.iidist = idist
+
+        # ====================================================
+        # optimizer 
+        # ====================================================
+        ### Create optimizer
+        # optimizer = Adam(model.parameters(), lr=CFG.lr, weight_decay=CFG.weight_decay, amsgrad=False)
+        self.optimizer = optimizer(self.model.parameters(), **optimizer_params)
         
-        super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(1, 20, 5, 1)
-        self.conv2 = nn.Conv2d(20, 50, 5, 1)
-        self.fc1 = nn.Linear(4 * 4 * 50, 500)
-        self.fc2 = nn.Linear(500, 10)
-
-    
-    def forward(self, x):
-
-        x = F.relu(self.conv1(x))
-        x = F.max_pool2d(x, 2, 2)
-        x = F.relu(self.conv2(x))
-        x = F.max_pool2d(x, 2, 2)
-        x = x.view(-1, 4 * 4 * 50)
-        x = F.relu(self.fc1(x))
-        x = self.fc2(x)
-        return F.log_softmax(x, dim=1)
-
-
-def train(args, model, mean_teacher, device, train_loader, test_loader, optimizer, epoch):
-    for batch_idx, (data, target) in enumerate(train_loader):
-
-        data, target = data.to(device), target.to(device)
-        optimizer.zero_grad()
-
-        output = model(data)
-
-        with torch.no_grad():
-            mean_t_output = mean_teacher(data)
+        # ====================================================
+        # scheduler 
+        # ====================================================
+        ### Create scheduler
+        if sheduler:
+            self.scheduler = get_scheduler(cfg, self.optimizer)
         
-
-        const_loss = F.mse_loss(output, mean_t_output)
-
-        weight = 0.2
-        loss = F.nll_loss(output, target) + weight * const_loss
-        loss.backward()
-        optimizer.step()
-
-        alpha = 0.95
-        for mean_param, param in zip(mean_teacher.parameters(), model.parameters()):
-            mean_param.data.mul_(alpha).add_(1-alpha, param.data)
+        # ====================================================
+        # criterion 
+        # ====================================================
+        ### Create criterion
+        self.criterion = get_criterion(cfg, device)
         
-        if batch_idx % args.log_interval == 0:
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                epoch, batch_idx * len(data), len(train_loader.dataset),
-                       100. * batch_idx / len(train_loader), loss.item()))
-            test(args, model, device, test_loader, 'original')
-            test(args, mean_teacher, device, test_loader, 'mean_teacher')
-
-def test(args, model, device, test_loader, model_type):
+        LOGGER.info(f'Fitter prepared. Device is {self.device}')
     
-    model.eval()
-    test_loss = 0 
-    correct = 0 
+    def fit(self, CFG, fold, train_loader, valid_loader, valid_folds):
+        LOGGER.info(f"========== Mean Teacher Trainig ==========")
+        LOGGER.info(f"========== fold: {fold} training ==========")
+        
+        
+        valid_labels = valid_folds[CFG.target_col].values
+        
+        self.model.to(self.device)
+        self.mean_teacher.to(self.device)
+        
+        
+        best_score_base = 0.
+        best_score_mean = 0.
+        best_loss = np.inf
+        
+        for epoch in range(self.n_epochs):
+            
+            start_time = time.time()
+            
+            # ====================================================
+            # train
+            # ====================================================
+            if CFG.device == 'TPU':
+                if CFG.nprocs == 1:
+                    avg_loss = self.train(train_loader, fold, epoch)
+                elif CFG.nprocs > 1:
+                    para_train_loader = self.pl.ParallelLoader(train_loader, [self.device])
+                    avg_loss = self.train(para_train_loader.per_device_loader(self.device),  fold, epoch)
+            elif CFG.device == 'GPU':
+                    avg_loss = self.train(train_loader, fold, epoch)
+            
+            # ====================================================
+            # eval baseline
+            # ====================================================
+            if CFG.device == 'TPU':
+                if CFG.nprocs == 1:
+                    avg_val_loss, preds, _ = self.validation(self.model, valid_loader, fold)
+                elif CFG.nprocs > 1:
+                    para_valid_loader = self.pl.ParallelLoader(valid_loader, [self.device])
+                    avg_val_loss, preds, valid_labels = self.validation(self.model,para_valid_loader.per_device_loader(self.device), fold)
+                    preds = self.idist.all_gather(torch.tensor(preds)).to('cpu').numpy()
+                    valid_labels = self.idist.all_gather(torch.tensor(valid_labels)).to('cpu').numpy()
+            elif CFG.device == 'GPU':
+                    base_avg_val_loss, base_preds, _ = self.validation(self.model, valid_loader, fold)
+                    mean_avg_val_loss, mean_preds, _ = self.validation(self.mean_teacher, valid_loader, fold)
+            
+            
+            
+            if isinstance(self.scheduler, ReduceLROnPlateau):
+                self.scheduler.step(avg_val_loss)
+            elif isinstance(self.scheduler, CosineAnnealingLR):
+                self.scheduler.step()
+            elif isinstance(self.scheduler, CosineAnnealingWarmRestarts):
+                self.scheduler.step()
+            elif isinstance(self.scheduler, GradualWarmupSchedulerV2):
+                    self.scheduler.step(epoch)
 
-    with torch.no_grad():
-        for data, target in test_loader:
-            data, target = data.to(device), target.to(device)
-            output = model(data)
-            test_loss += F.nll_loss(output, target, reduction='sum').item()
-            pred = output.argmax(dim=1, keepdim=True)
-            correct += pred.eq(target.view_as(pred)).sum().item()
+            # ====================================================
+            # scoring
+            # ====================================================
+            def print_scores(avg_val_loss, preds, model_name, best_score):
+                LOGGER.info(f"===========  { model_name } ==============")
+                score = get_score(valid_labels, preds.argmax(1))
+
+                elapsed = time.time() - start_time
+
+                if CFG.device == 'GPU':
+                    LOGGER.info(f'Epoch {epoch+1} - Fold {fold} - avg_train_loss: {avg_loss:.4f}  avg_val_loss: {avg_val_loss:.4f}  time: {elapsed:.0f}s')
+                    LOGGER.info(f'Epoch {epoch+1} - Fold {fold} - Score: {score:.4f}')
+                elif CFG.device == 'TPU':
+                    if CFG.nprocs == 1:
+                        LOGGER.info(f'Epoch {epoch+1} - Fold {fold} - avg_train_loss: {avg_loss:.4f}  avg_val_loss: {avg_val_loss:.4f}  time: {elapsed:.0f}s')
+                        LOGGER.info(f'Epoch {epoch+1} - Fold {fold} - Score: {score:.4f}')
+                    elif CFG.nprocs > 1:
+                        self.xm.master_print(f'Epoch {epoch+1} - Fold {fold} - avg_train_loss: {avg_loss:.4f}  avg_val_loss: {avg_val_loss:.4f}  time: {elapsed:.0f}s')
+                        self.xm.master_print(f'Epoch {epoch+1} - Fold {fold} - Score: {score:.4f}')
+                
+                if score > best_score:
+                    best_score = score
+                    if CFG.device == 'GPU':
+                        LOGGER.info(f'Epoch {epoch+1} - Fold {fold} - Save Best Score: {best_score:.4f} Model')
+                        torch.save({'model': self.model.state_dict(), 
+                                    'preds': preds},
+                                CFG.OUTPUT_DIR+f'{model_name}_fold{fold}_best_score.pth')
+                    elif CFG.device == 'TPU':
+                        if CFG.nprocs == 1:
+                            LOGGER.info(f'Epoch {epoch+1} - Fold {fold} - Save Best Score: {best_score:.4f} Model')
+                        elif CFG.nprocs > 1:
+                            self.xm.master_print(f'Epoch {epoch+1} - Fold {fold} - Save Best Score: {best_score:.4f} Model')
+                        self.xm.save({'model': self.model, 
+                                'preds': preds}, 
+                                CFG.OUTPUT_DIR+f'{model_name}_fold{fold}_best_score.pth')
+            
+            print_scores(base_avg_val_loss, base_preds, 'base', best_score_base)
+            print_scores(mean_avg_val_loss, mean_preds, 'mean', best_score_mean)
+        
+        if CFG.nprocs != 8:
+            check_point = torch.load(CFG.OUTPUT_DIR+f'{CFG.model_name}_fold{fold}_best_score.pth')
+            valid_folds['preds'] = check_point['preds'].argmax(1)
+
+        return valid_folds
+
+    def train(self, train_loader, fold=0, epoch=0):
+        if self.cfg.device == 'GPU':
+            scaler = GradScaler()
+        batch_time = AverageMeter()
+        data_time = AverageMeter()
+        losses = AverageMeter()
+        scores = AverageMeter()
+        # switch to train mode
+        self.model.train()
+        start = end = time.time()
+        global_step = 0
+        for step, (images, labels) in enumerate(train_loader):
+            # measure data loading time
+            data_time.update(time.time() - end)
+            images = images.to(self.device).float()
+            labels = labels.to(self.device).long()
+            batch_size = labels.size(0)
+            
+            mix_decision = np.random.rand()
+            if mix_decision < 0.25 and self.cfg.cutmix:
+                images, labels = cutmix(images, labels, 1.)
+            elif mix_decision >= 0.25 and mix_decision < 0.5 and self.cfg.fmix:
+                images, labels = fmix(images, labels, alpha=1., decay_power=5., shape=(512,512), device=self.device)
+
+            if self.cfg.device == 'GPU':
+                with torch.no_grad():
+                    mean_t_output = self.mean_teacher(images.float())
+                with autocast():
+                    y_preds = self.model(images.float())
+                    
+                    const_loss = F.mse_loss(y_preds, mean_t_output)
+
+                    
+                    loss = self.criterion(y_preds, labels) + CFG.weight_mean_teacher * const_loss
+
+                    # record loss
+                    losses.update(loss.item(), batch_size)
+                    if self.cfg.gradient_accumulation_steps > 1:
+                        loss = loss / self.cfg.gradient_accumulation_steps
+
+                    scaler.scale(loss).backward()
+                    grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.max_grad_norm)
+                    if (step + 1) % self.cfg.gradient_accumulation_steps == 0:
+                        scaler.step(self.optimizer)
+                        scaler.update()
+                        self.optimizer.zero_grad()
+                        global_step += 1
+                    
+                        for mean_param, param in zip(self.mean_teacher.parameters(), self.model.parameters()):
+                            mean_param.data.mul_(CFG.alpha_mean_teacher).add_(1-CFG.alpha_mean_teacher, param.data)
+                            
+            elif self.cfg.device == 'TPU':
+                y_preds = self.model(images)
+                loss = self.criterion(y_preds, labels)
+                # record loss
+                losses.update(loss.item(), batch_size)
+                if self.cfg.gradient_accumulation_steps > 1:
+                    loss = loss / self.cfg.gradient_accumulation_steps
+                loss.backward()
+                grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.max_grad_norm)
+                if (step + 1) % self.cfg.gradient_accumulation_steps == 0:
+                    self.xm.optimizer_step(self.optimizer, barrier=True)
+                    self.optimizer.zero_grad()
+                    global_step += 1
+            # measure elapsed time
+            batch_time.update(time.time() - end)
+            end = time.time()
+            if self.cfg.device == 'GPU':
+                if step % self.cfg.print_freq == 0 or step == (len(train_loader)-1):
+                    print('Epoch: [{0}][{1}/{2}] '
+                        'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
+                        'Elapsed {remain:s} '
+                        'Loss: {loss.val:.4f}({loss.avg:.4f}) '
+                        'Grad: {grad_norm:.4f}  '
+                        'Fold: {fold}'
+                        #'LR: {lr:.6f}  '
+                        .format(
+                        epoch+1, step, len(train_loader), batch_time=batch_time,
+                        data_time=data_time, loss=losses,
+                        remain=timeSince(start, float(step+1)/len(train_loader)),
+                        grad_norm=grad_norm,
+                        fold=fold
+                        #lr=scheduler.get_lr()[0],
+                        ))
+            elif self.cfg.device == 'TPU':
+                if step % self.cfg.print_freq == 0 or step == (len(train_loader)-1):
+                    self.xm.master_print('Epoch: [{0}][{1}/{2}] '
+                                    'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
+                                    'Elapsed {remain:s} '
+                                    'Loss: {loss.val:.4f}({loss.avg:.4f}) '
+                                    'Grad: {grad_norm:.4f}  '
+                                    'Fold: {fold}'
+                                    #'LR: {lr:.6f}  '
+                                    .format(
+                                    epoch+1, step, len(train_loader), batch_time=batch_time,
+                                    data_time=data_time, loss=losses,
+                                    remain=timeSince(start, float(step+1)/len(train_loader)),
+                                    grad_norm=grad_norm,
+                                    fold=fold
+                                    #lr=scheduler.get_lr()[0],
+                                    ))
+        return losses.avg
     
-    test_loss /= len(test_loader.dataset)
+    def validation(self, model, valid_loader, fold=0):
+        batch_time = AverageMeter()
+        data_time = AverageMeter()
+        losses = AverageMeter()
+        scores = AverageMeter()
+        # switch to evaluation mode
+        model.eval()
+        trues = []
+        preds = []
+        start = end = time.time()
+        for step, (images, labels) in enumerate(valid_loader):
+            # measure data loading time
+            data_time.update(time.time() - end)
+            images = images.to(self.device)
+            labels = labels.to(self.device)
+            batch_size = labels.size(0)
+            
+            # compute loss
+            with torch.no_grad():
+                y_preds = model(images)
+            loss = self.criterion(y_preds, labels)
+            losses.update(loss.item(), batch_size)
+            # record accuracy
+            trues.append(labels.to('cpu').numpy())
+            preds.append(y_preds.softmax(1).to('cpu').numpy())
+            if self.cfg.gradient_accumulation_steps > 1:
+                loss = loss / self.cfg.gradient_accumulation_steps
+            # measure elapsed time
+            batch_time.update(time.time() - end)
+            end = time.time()
+            if self.cfg.device == 'GPU':
+                if step % self.cfg.print_freq == 0 or step == (len(valid_loader)-1):
+                    print('EVAL: [{0}/{1}] '
+                        'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
+                        'Elapsed {remain:s} '
+                        'Loss: {loss.val:.4f}({loss.avg:.4f}) '
+                        'Fold: {fold}'
+                        .format(
+                        step, len(valid_loader), batch_time=batch_time,
+                        data_time=data_time, loss=losses,
+                        remain=timeSince(start, float(step+1)/len(valid_loader)),
+                        fold=fold
+                        ))
+            elif self.cfg.device == 'TPU':
+                if step % self.cfg.print_freq == 0 or step == (len(valid_loader)-1):
+                    self.xm.master_print('EVAL: [{0}/{1}] '
+                                    'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
+                                    'Elapsed {remain:s} '
+                                    'Loss: {loss.val:.4f}({loss.avg:.4f}) '
+                                    'Fold: {fold}'
+                                    .format(
+                                    step, len(valid_loader), batch_time=batch_time,
+                                    data_time=data_time, loss=losses,
+                                    remain=timeSince(start, float(step+1)/len(valid_loader)),
+                                    fold=fold
+                                    ))
 
-    print('\nTest set: Average loss: {} {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
-        model_type, test_loss, correct, len(test_loader.dataset),
-        100. * correct / len(test_loader.dataset)))
-    model.train()
-
-
-def main():
-    
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    torch.manual_seed(CFG.seed)
-    kwargs = {'num_workers': 0, 'pin_memory': True} if CFG.device == 'GPU' else {}
-
-    train_loader = torch.utils.data.DataLoader(
-        datasets.MNIST('./', train=True, download=True,
-                       transform=transforms.Compose([
-                           transforms.ToTensor(),
-                           transforms.Normalize((0.1307,), (0.3081,))
-                       ])),
-        batch_size=CFG.batch_size, shuffle=True, **kwargs)
-    test_loader = torch.utils.data.DataLoader(
-        datasets.MNIST('./', train=False, transform=transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))
-        ])),
-        batch_size=CFG.test_batch_size, shuffle=True, **kwargs)
-    
-    model = Net().to(device)
-    mean_teacher = Net().to(device)
-
-    optimizer = optim.SGD(model.parameters(), lr=CFG.lr, momentum=CFG.momentum)
-
-    for epoch in range(1, CFG.epochs + 1):
-        train(CFG, model, mean_teacher, device, train_loader, test_loader, optimizer, epoch)
-
-    if (CFG.save_model):
-        torch.save(model.state_dict(), "mnist_cnn.pt")
-    
-if __name__ == '__main__':
-    main()
+        trues = np.concatenate(trues)
+        predictions = np.concatenate(preds)
+        return losses.avg, predictions, trues 
