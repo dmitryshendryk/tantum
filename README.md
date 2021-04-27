@@ -78,3 +78,12 @@ class CFG:
         amsgrad=False
     )
 ```
+
+## Features supported
+ - Learning Rate Warmup
+
+Use in CFG:
+    freeze_epo = 0 # GradualWarmupSchedulerV2
+    warmup_epo = 1 # GradualWarmupSchedulerV2
+    cosine_epo = 9 # GradualWarmupSchedulerV2  ## 19
+
