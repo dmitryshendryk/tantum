@@ -14,39 +14,6 @@ from tantum.utils.loss import get_criterion
 from tantum.utils.logger import LOGGER
 from tantum.utils.metrics import AverageMeter, timeSince
 
-# class CFG:
-#     seed=42
-#     criterion = 'CrossEntropyLoss' 
-#     n_epochs = 10
-#     device= 'GPU'
-#     fmix=False 
-#     cutmix=False
-#     lr = 0.001
-#     swa = False
-#     nprocs = 1
-#     swa_start = 5
-#     print_freq = 100
-#     scheduler = 'GradualWarmupSchedulerV2'
-#     optimizer = Adam
-#     batch_size = 100
-#     weight_decay=1e-6
-#     gradient_accumulation_steps=1
-#     max_grad_norm=1000
-#     n_fold=5
-#     target_col = 'label'
-#     trn_fold=[0,1,2,3,4] #[0, 1, 2, 3, 4]
-#     num_workers = 0
-#     freeze_epo = 0 # GradualWarmupSchedulerV2
-#     warmup_epo = 1 # GradualWarmupSchedulerV2
-#     cosine_epo = 9 # GradualWarmupSchedulerV2  ## 19
-#     OUTPUT_DIR = './'
-#     model_name = 'simple_net'
-#     optimizer_params = dict(
-#         lr=lr, 
-#         weight_decay=weight_decay, 
-#         amsgrad=False
-#     )
-
 class Fitter():
 
     def __init__(
@@ -90,18 +57,13 @@ class Fitter():
         LOGGER.info(f'Fitter prepared. Device is {self.device}')
     
     def fit(self, CFG, fold, train_loader, valid_loader, valid_folds):
+        LOGGER.info(f"========== Base Fitter ==========")
         LOGGER.info(f"========== fold: {fold} training ==========")
         
         
         valid_labels = valid_folds[CFG.target_col].values
         
         self.model.to(self.device)
-        
-        if CFG.swa:
-            swa_model = AveragedModel(self.model)
-            swa_scheduler = SWALR(self.optimizer, swa_lr=0.05)
-        else:
-            swa_model = None
         
     
         
@@ -147,10 +109,6 @@ class Fitter():
             elif isinstance(self.scheduler, CosineAnnealingWarmRestarts):
                 self.scheduler.step()
             elif isinstance(self.scheduler, GradualWarmupSchedulerV2):
-                if epoch > CFG.swa_start and CFG.swa:
-                    swa_model.update_parameters(self.model)
-                    swa_scheduler.step()
-                else:
                     self.scheduler.step(epoch)
 
             # ====================================================
@@ -187,33 +145,6 @@ class Fitter():
                             'preds': preds}, 
                             CFG.OUTPUT_DIR+f'{CFG.model_name}_fold{fold}_best_score.pth')
 
-        # ====================================================
-        # Update bn statistics for the swa_model
-        # ====================================================
-        if CFG.swa:
-            torch.cuda.empty_cache()
-            torch.optim.swa_utils.update_bn(train_loader, swa_model, device=self.device)
-        
-        #==========================
-        # Compare SWA and Baseline
-        #==========================
-        
-        if CFG.swa:
-            avg_val_loss_baseline, preds_baseline, _ = self.validation(valid_loader, fold)
-            score_baseline = get_score(valid_labels, preds_baseline.argmax(1))
-
-            self.model = swa_model
-
-            avg_val_loss_swa, preds_swa, _ = self.validation(valid_loader, fold)
-            score_swa = get_score(valid_labels, preds_swa.argmax(1))
-
-            if CFG.device == 'GPU':
-                LOGGER.info(f'Fold {fold} - avg_val_loss_baseline: {avg_val_loss_baseline:.4f} ')
-                LOGGER.info(f'Fold {fold} - Score_Baseline: {score_baseline:.4f}')
-                LOGGER.info('=====================================')
-                LOGGER.info(f'Fold {fold} - avg_val_loss_swa: {avg_val_loss_swa:.4f}')
-                LOGGER.info(f'Fold {fold} - Score_SWA: {score_swa:.4f}')
-        
         
         if CFG.nprocs != 8:
             check_point = torch.load(CFG.OUTPUT_DIR+f'{CFG.model_name}_fold{fold}_best_score.pth')
@@ -253,17 +184,23 @@ class Fitter():
                         loss = self.criterion(y_preds, labels[0]) * labels[2] + self.criterion(y_preds, labels[1]) * (1. - labels[2])
                     else:
                         loss = self.criterion(y_preds, labels)
-                    # record loss
-                    losses.update(loss.item(), batch_size)
-                    if self.cfg.gradient_accumulation_steps > 1:
-                        loss = loss / self.cfg.gradient_accumulation_steps
-                    scaler.scale(loss).backward()
+                
+                # record loss
+                if self.cfg.gradient_accumulation_steps > 1:
+                    loss = loss / self.cfg.gradient_accumulation_steps
+                
+                losses.update(loss.item(), batch_size)
+                scaler.scale(loss).backward()
+                
+                if (step + 1) % self.cfg.gradient_accumulation_steps == 0:
+
+                    scaler.unscale_(self.optimizer)
                     grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.max_grad_norm)
-                    if (step + 1) % self.cfg.gradient_accumulation_steps == 0:
-                        scaler.step(self.optimizer)
-                        scaler.update()
-                        self.optimizer.zero_grad()
-                        global_step += 1
+
+                    scaler.step(self.optimizer)
+                    scaler.update()
+                    self.optimizer.zero_grad()
+                    global_step += 1
                             
             elif self.cfg.device == 'TPU':
                 y_preds = self.model(images)

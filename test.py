@@ -44,11 +44,13 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 
 class CFG:
+    debug = True
     weight_mean_teacher = 0.2
     alpha_mean_teacher = 0.99
+    weight_rampup = 30
+    apex = True
     seed=42
     criterion = 'CrossEntropyLoss' 
-    n_epochs = 10
     device= 'GPU'
     fmix=False 
     cutmix=False
@@ -71,6 +73,7 @@ class CFG:
     freeze_epo = 0 # GradualWarmupSchedulerV2
     warmup_epo = 1 # GradualWarmupSchedulerV2
     cosine_epo = 9 # GradualWarmupSchedulerV2  ## 19
+    n_epochs = freeze_epo + warmup_epo + cosine_epo
     OUTPUT_DIR = './'
     model_name = 'simple_net'
     optimizer_params = dict(
@@ -93,6 +96,11 @@ def seed_everything(seed):
 seed_everything(CFG.seed)
 
 df = pd.read_csv('./train.csv')
+
+if CFG.debug:
+    CFG.n_epochs = 1
+    df = df.sample(n=1000, random_state=CFG.seed).reset_index(drop=True)
+
 print(df.shape)
 df.head()
 
@@ -167,11 +175,12 @@ fitter = MeanTeacher(
     mean_teacher = Net(),
     device=device,
     optimizer = CFG.optimizer,
-    n_epochs = 10,
+    n_epochs = CFG.n_epochs,
     sheduler = CFG.scheduler,
     optimizer_params = CFG.optimizer_params
 )
 
+oof_df = pd.DataFrame()
 for fold in range(CFG.n_fold):
     if fold in CFG.trn_fold:
         trn_idx = folds[folds['fold'] != fold].index
@@ -213,4 +222,7 @@ for fold in range(CFG.n_fold):
             num_workers=CFG.num_workers,
         )
         
-        fitter.fit(CFG, fold, train_loader, valid_loader, valid_folds)
+        _oof_df = fitter.fit(CFG, fold, train_loader, valid_loader, valid_folds)
+        oof_df = pd.concat([oof_df, _oof_df])
+    
+oof_df[['label','preds', 'fold', 0, 1, 2,3,4,5,6,7,8,9]].to_csv('oof_df.csv', index=False)

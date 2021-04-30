@@ -391,6 +391,10 @@ class TaylorCrossEntropyLoss(nn.Module):
         loss = self.lab_smooth(log_probs, labels)
         return loss
 
+def mse_with_softmax(logit1, logit2):
+    assert logit1.size()==logit2.size()
+    return F.mse_loss(F.softmax(logit1,1), F.softmax(logit2,1))
+
 def get_criterion(cfg, device):
     if cfg.criterion=='CrossEntropyLoss':
         criterion = nn.CrossEntropyLoss()

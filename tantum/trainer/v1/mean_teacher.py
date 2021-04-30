@@ -2,6 +2,7 @@ import torch
 import numpy as np 
 import time 
 from datetime import datetime
+import pandas as pd
 
 from torch.cuda.amp import autocast, GradScaler
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, CosineAnnealingLR, ReduceLROnPlateau
@@ -13,42 +14,8 @@ from tantum.utils.metrics import get_score
 from tantum.utils.loss import get_criterion
 from tantum.utils.logger import LOGGER
 from tantum.utils.metrics import AverageMeter, timeSince
-
-# class CFG:
-#     seed=42
-#     weight_mean_teacher = 0.2
-#     alpha_mean_teacher = 0.99
-#     criterion = 'CrossEntropyLoss' 
-#     n_epochs = 10
-#     device= 'GPU'
-#     fmix=False 
-#     cutmix=False
-#     lr = 0.001
-#     swa = False
-#     nprocs = 1
-#     swa_start = 5
-#     print_freq = 100
-#     scheduler = 'GradualWarmupSchedulerV2'
-#     optimizer = Adam
-#     batch_size = 100
-#     weight_decay=1e-6
-#     gradient_accumulation_steps=1
-#     max_grad_norm=1000
-#     n_fold=5
-#     target_col = 'label'
-#     trn_fold=[0,1,2,3,4] #[0, 1, 2, 3, 4]
-#     num_workers = 0
-#     freeze_epo = 0 # GradualWarmupSchedulerV2
-#     warmup_epo = 1 # GradualWarmupSchedulerV2
-#     cosine_epo = 9 # GradualWarmupSchedulerV2  ## 19
-#     OUTPUT_DIR = './'
-#     model_name = 'simple_net'
-#     optimizer_params = dict(
-#         lr=lr, 
-#         weight_decay=weight_decay, 
-#         amsgrad=False
-#     )
-
+from tantum.utils.loss import mse_with_softmax
+from tantum.utils.rampup import exp_rampup
 class MeanTeacher():
 
     def __init__(
@@ -69,6 +36,7 @@ class MeanTeacher():
         self.xm = xm 
         self.pl = pl 
         self.iidist = idist
+        self.rampup = exp_rampup(self.cfg.weight_rampup)
 
         # ====================================================
         # optimizer 
@@ -175,7 +143,7 @@ class MeanTeacher():
                         LOGGER.info(f'Epoch {epoch+1} - Fold {fold} - Save Best Score: {best_score:.4f} Model')
                         torch.save({'model': self.model.state_dict(), 
                                     'preds': preds},
-                                CFG.OUTPUT_DIR+f'{model_name}_fold{fold}_best_score.pth')
+                                CFG.OUTPUT_DIR+f'{CFG.model_name}_{model_name}_fold{fold}_best_score.pth')
                     elif CFG.device == 'TPU':
                         if CFG.nprocs == 1:
                             LOGGER.info(f'Epoch {epoch+1} - Fold {fold} - Save Best Score: {best_score:.4f} Model')
@@ -189,9 +157,12 @@ class MeanTeacher():
             print_scores(mean_avg_val_loss, mean_preds, 'mean', best_score_mean)
         
         if CFG.nprocs != 8:
-            check_point = torch.load(CFG.OUTPUT_DIR+f'{CFG.model_name}_fold{fold}_best_score.pth')
+            if best_score_base >= best_score_mean:
+                check_point = torch.load(CFG.OUTPUT_DIR+f'{CFG.model_name}_base_fold{fold}_best_score.pth')
+            else:
+                check_point = torch.load(CFG.OUTPUT_DIR+f'{CFG.model_name}_mean_fold{fold}_best_score.pth')
             valid_folds['preds'] = check_point['preds'].argmax(1)
-
+            valid_folds = pd.concat([valid_folds, pd.DataFrame(check_point['preds'])], axis=1)
         return valid_folds
 
     def train(self, train_loader, fold=0, epoch=0):
@@ -206,6 +177,7 @@ class MeanTeacher():
         start = end = time.time()
         global_step = 0
         for step, (images, labels) in enumerate(train_loader):
+            global_step += 1
             # measure data loading time
             data_time.update(time.time() - end)
             images = images.to(self.device).float()
@@ -219,15 +191,25 @@ class MeanTeacher():
                 images, labels = fmix(images, labels, alpha=1., decay_power=5., shape=(512,512), device=self.device)
 
             if self.cfg.device == 'GPU':
-                with torch.no_grad():
-                    mean_t_output = self.mean_teacher(images.float())
-                with autocast():
-                    y_preds = self.model(images.float())
+               
+                with autocast(enabled=self.cfg.apex):
                     
-                    const_loss = F.mse_loss(y_preds, mean_t_output)
 
+                    ##=== forward ===
+                    y_preds = self.model(images.float())
+                    loss = self.criterion(y_preds, labels)
+
+                    ##=== Semi-supervised Training ===
+                    self.update_ema(self.model, self.mean_teacher, self.cfg.alpha_mean_teacher, global_step)
+                    ## consistency loss
+                    with torch.no_grad():
+                        mean_t_output = self.mean_teacher(images.float())
+                        mean_t_output = mean_t_output.detach()
+
+                    cons_loss  = mse_with_softmax(y_preds, mean_t_output)
+                    cons_loss *= self.rampup(epoch)*self.cfg.weight_mean_teacher
+                    loss += cons_loss
                     
-                    loss = self.criterion(y_preds, labels) + CFG.weight_mean_teacher * const_loss
 
                     # record loss
                     losses.update(loss.item(), batch_size)
@@ -240,10 +222,7 @@ class MeanTeacher():
                         scaler.step(self.optimizer)
                         scaler.update()
                         self.optimizer.zero_grad()
-                        global_step += 1
-                    
-                        for mean_param, param in zip(self.mean_teacher.parameters(), self.model.parameters()):
-                            mean_param.data.mul_(CFG.alpha_mean_teacher).add_(1-CFG.alpha_mean_teacher, param.data)
+                        
                             
             elif self.cfg.device == 'TPU':
                 y_preds = self.model(images)
@@ -357,3 +336,8 @@ class MeanTeacher():
         trues = np.concatenate(trues)
         predictions = np.concatenate(preds)
         return losses.avg, predictions, trues 
+    
+    def update_ema(self, model, ema_model, alpha, global_step):
+        alpha = min(1 - 1 / (global_step +1), alpha)
+        for ema_param, param in zip(ema_model.parameters(), model.parameters()):
+            ema_param.data.mul_(alpha).add_(1-alpha, param.data)
