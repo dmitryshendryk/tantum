@@ -1,7 +1,38 @@
 import torch 
 import cv2 
+import numpy as np
 
 from torch.utils.data import Dataset
+from tantum.datasets.data_utils import NO_LABEL
+
+
+def encode_label(label):
+    return NO_LABEL* (label +1)
+
+def decode_label(label):
+    return NO_LABEL * label -1
+
+def split_relabel_data(np_labs, labels, label_per_class,
+                        num_classes):
+    """ Return the labeled indexes and unlabeled_indexes
+    """
+    labeled_idxs = []
+    unlabed_idxs = []
+    for id in range(num_classes):
+        indexes = np.where(np_labs==id)[0]
+        np.random.shuffle(indexes)
+        labeled_idxs.extend(indexes[:label_per_class])
+        unlabed_idxs.extend(indexes[label_per_class:])
+    np.random.shuffle(labeled_idxs)
+    np.random.shuffle(unlabed_idxs)
+    ## relabel dataset
+    for idx in unlabed_idxs:
+        labels[idx] = encode_label(labels[idx])
+
+    return labeled_idxs, unlabed_idxs
+
+
+
 class TrainDataset(Dataset):
     
     def __init__(self, 

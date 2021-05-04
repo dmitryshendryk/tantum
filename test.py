@@ -12,7 +12,7 @@ from sklearn import model_selection
 
 from sklearn.model_selection import StratifiedKFold
 import efficientnet_pytorch
-
+from torch.utils.data import Subset
 
 import cv2
 import os 
@@ -101,15 +101,12 @@ if CFG.debug:
     CFG.n_epochs = 1
     df = df.sample(n=1000, random_state=CFG.seed).reset_index(drop=True)
 
-print(df.shape)
-df.head()
 
 folds = df.copy()
 Fold = StratifiedKFold(n_splits=CFG.n_fold, shuffle=True, random_state=CFG.seed)
 for n, (train_index, val_index) in enumerate(Fold.split(folds, folds[CFG.target_col])):
     folds.loc[val_index, 'fold'] = int(n)
 folds['fold'] = folds['fold'].astype(int)
-
 
 
 class DatasetRetriever(Dataset):
@@ -168,17 +165,8 @@ class Net(nn.Module):
         return F.log_softmax(x)
 
 
-
-fitter = MeanTeacher(
-    cfg=CFG,
-    model = Net(),
-    mean_teacher = Net(),
-    device=device,
-    optimizer = CFG.optimizer,
-    n_epochs = CFG.n_epochs,
-    sheduler = CFG.scheduler,
-    optimizer_params = CFG.optimizer_params
-)
+num_indices = 100
+indices = list(range(num_indices*8))
 
 oof_df = pd.DataFrame()
 for fold in range(CFG.n_fold):
@@ -207,9 +195,13 @@ for fold in range(CFG.n_fold):
             transforms=get_valid_transforms(),
         )
 
+        train_dataset.y[num_indices:] = -1
+        train_dataset_less_labels = Subset(train_dataset, indices)
+
+
         
         train_loader = DataLoader(
-            train_dataset,
+            train_dataset_less_labels,
             batch_size=CFG.batch_size,
             shuffle=True,
             num_workers=CFG.num_workers,
@@ -222,7 +214,7 @@ for fold in range(CFG.n_fold):
             num_workers=CFG.num_workers,
         )
         
-        _oof_df = fitter.fit(CFG, fold, train_loader, valid_loader, valid_folds)
-        oof_df = pd.concat([oof_df, _oof_df])
-    
-oof_df[['label','preds', 'fold', 0, 1, 2,3,4,5,6,7,8,9]].to_csv('oof_df.csv', index=False)
+
+        print(train_loader)
+        exit(0)
+exit(0)
