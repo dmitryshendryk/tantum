@@ -133,9 +133,9 @@ https://github.com/freedom1810/kaggle-cassava
 ## TODO
 
 - [x] Base fitter with GPU
-- [] Base fitter with TPU
+- [ ] Base fitter with TPU
 - [x] Mean Teacher with GPU
-- [] Mean Teacher with TPU
+- [ ] Mean Teacher with TPU
 - [x] Mixed Precision Training
 - [x] Cutmix, Fmix
 - [ ] MixUp
