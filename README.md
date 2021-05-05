@@ -115,7 +115,7 @@ Use from tantum.optimizer
     from tantum.optimizer import RAdam
 ```
 
-## TODO
+## Investigate
 
 ### Finding Final Ensembles
 https://www.kaggle.com/jannish/cassava-leaf-disease-finding-final-ensembles
@@ -130,3 +130,21 @@ https://github.com/fadel/pytorch_ema
 https://github.com/freedom1810/kaggle-cassava
 
 
+## TODO
+
+- [x] Base fitter with GPU
+- [] Base fitter with TPU
+- [x] Mean Teacher with GPU
+- [] Mean Teacher with TPU
+- [x] Mixed Precision Training
+- [x] Cutmix, Fmix
+- [ ] MixUp
+- [ ] Callbacks inside trainig loop
+- [ ] MixMatch
+- [ ] FixMatch
+- [ ] Out Of Fold csv with predictions and probs
+- [ ] EMA model
+- [ ] Finding Ensembles 
+- [ ] Attention VIT
+- [ ] Attntion Effnet (CBAM)
+- [ ] Generic Ensemble class 
