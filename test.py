@@ -44,7 +44,7 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 
 class CFG:
-    debug = True
+    debug = False
     weight_mean_teacher = 0.2
     alpha_mean_teacher = 0.99
     weight_rampup = 30
@@ -101,6 +101,7 @@ if CFG.debug:
     CFG.n_epochs = 1
     df = df.sample(n=1000, random_state=CFG.seed).reset_index(drop=True)
 
+df = df.sample(n=1000, random_state=CFG.seed).reset_index(drop=True)
 
 folds = df.copy()
 Fold = StratifiedKFold(n_splits=CFG.n_fold, shuffle=True, random_state=CFG.seed)
@@ -168,9 +169,21 @@ class Net(nn.Module):
 num_indices = 100
 indices = list(range(num_indices*8))
 
+
+
+
 oof_df = pd.DataFrame()
 for fold in range(CFG.n_fold):
     if fold in CFG.trn_fold:
+        fitter = Fitter(
+            cfg=CFG,
+            model = Net(),
+            device=device,
+            optimizer = CFG.optimizer,
+            n_epochs = CFG.n_epochs,
+            sheduler = CFG.scheduler,
+            optimizer_params = CFG.optimizer_params
+        )
         trn_idx = folds[folds['fold'] != fold].index
         val_idx = folds[folds['fold'] == fold].index
 
@@ -195,13 +208,9 @@ for fold in range(CFG.n_fold):
             transforms=get_valid_transforms(),
         )
 
-        train_dataset.y[num_indices:] = -1
-        train_dataset_less_labels = Subset(train_dataset, indices)
-
-
         
         train_loader = DataLoader(
-            train_dataset_less_labels,
+            train_dataset,
             batch_size=CFG.batch_size,
             shuffle=True,
             num_workers=CFG.num_workers,
@@ -214,7 +223,4 @@ for fold in range(CFG.n_fold):
             num_workers=CFG.num_workers,
         )
         
-
-        print(train_loader)
-        exit(0)
-exit(0)
+        _oof_df = fitter.fit(CFG, fold, train_loader, valid_loader, valid_folds)

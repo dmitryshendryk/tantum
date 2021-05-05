@@ -314,3 +314,8 @@ class Fitter():
         trues = np.concatenate(trues)
         predictions = np.concatenate(preds)
         return losses.avg, predictions, trues 
+
+
+
+user_test_filter = {user: user_test_filter.get(user, set()).union(rear_train).difference(bookmarks_set.get(user, set())) \
+                            for user in users_test}
