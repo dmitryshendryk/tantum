@@ -120,8 +120,13 @@ Use from tantum.optimizer
 ### Finding Final Ensembles
 https://www.kaggle.com/jannish/cassava-leaf-disease-finding-final-ensembles
 
-## Attention
+### Attention
 https://github.com/TomYanabe/Cassava-Leaf-Disease-Classification/blob/master/src/modules.py
 https://github.com/ZhenxingZheng/attention-network
+https://www.kaggle.com/c/cassava-leaf-disease-classification/discussion/220751
+
+### EMA Models
+https://github.com/fadel/pytorch_ema
+https://github.com/freedom1810/kaggle-cassava
 
 
