@@ -119,11 +119,21 @@ Use from tantum.optimizer
 After every train you will get the oof_df.csv file with 
 predictions, folds, labels. 
 
+This need to run to get correct format
 ```
 class_columns = ['']
-df['base_net'] = df[[class_columns]].apply(lambda r: tuple(r), axis=1).apply(np.array)
+oof_df['base_net'] = oof_df[[class_columns]].apply(lambda r: tuple(r), axis=1).apply(np.array)
 ```
 ![image info](./imgs/oof_df.png)
+
+## Find Best Ensemble
+
+Need to take ood_df from each training and create one df.
+After use function from utils.ensemble
+
+```
+def get_best_ensemble(df, columns, top=50):
+```
 
 
 ## Investigate
@@ -154,9 +164,9 @@ https://github.com/freedom1810/kaggle-cassava
 - [ ] Callbacks inside trainig loop
 - [ ] MixMatch
 - [ ] FixMatch
-- [ ] Out Of Fold csv with predictions and probs
+- [x] Out Of Fold csv with predictions and probs
 - [ ] EMA model
-- [ ] Finding Ensembles 
+- [x] Finding Ensembles 
 - [ ] Attention VIT
 - [ ] Attntion Effnet (CBAM)
 - [ ] Generic Ensemble class 
