@@ -119,9 +119,10 @@ Use from tantum.optimizer
 After every train you will get the oof_df.csv file with 
 predictions, folds, labels. 
 
+This need to run to get correct format
 ```
 class_columns = ['']
-df['base_net'] = df[[class_columns]].apply(lambda r: tuple(r), axis=1).apply(np.array)
+oof_df['base_net'] = oof_df[[class_columns]].apply(lambda r: tuple(r), axis=1).apply(np.array)
 ```
 ![image info](./imgs/oof_df.png)
 
