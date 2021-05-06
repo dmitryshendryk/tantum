@@ -115,6 +115,17 @@ Use from tantum.optimizer
     from tantum.optimizer import RAdam
 ```
 
+## Out Of Fold and Best Ensemble
+After every train you will get the oof_df.csv file with 
+predictions, folds, labels. 
+
+```
+class_columns = ['']
+df['base_net'] = df[[class_columns]].apply(lambda r: tuple(r), axis=1).apply(np.array)
+```
+![image info](./imgs/oof_df.png)
+
+
 ## Investigate
 
 ### Finding Final Ensembles
