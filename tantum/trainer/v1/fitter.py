@@ -148,6 +148,7 @@ class Fitter():
         
         if CFG.nprocs != 8:
             check_point = torch.load(CFG.OUTPUT_DIR+f'{CFG.model_name}_fold{fold}_best_score.pth')
+            valid_folds[[str(c) for c in range(self.cfg.target_size)]] = check_point['preds']
             valid_folds['preds'] = check_point['preds'].argmax(1)
 
         return valid_folds
@@ -316,6 +317,3 @@ class Fitter():
         return losses.avg, predictions, trues 
 
 
-
-user_test_filter = {user: user_test_filter.get(user, set()).union(rear_train).difference(bookmarks_set.get(user, set())) \
-                            for user in users_test}

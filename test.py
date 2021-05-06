@@ -53,6 +53,7 @@ class CFG:
     criterion = 'CrossEntropyLoss' 
     device= 'GPU'
     fmix=False 
+    target_size = 10
     cutmix=False
     lr = 0.001
     swa = False
@@ -224,3 +225,6 @@ for fold in range(CFG.n_fold):
         )
         
         _oof_df = fitter.fit(CFG, fold, train_loader, valid_loader, valid_folds)
+        oof_df = pd.concat([oof_df, _oof_df])
+
+oof_df.to_csv('oof_df.csv', index=False)

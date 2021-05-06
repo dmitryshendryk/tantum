@@ -164,8 +164,9 @@ class MeanTeacher():
                 check_point = torch.load(CFG.OUTPUT_DIR+f'{CFG.model_name}_base_fold{fold}_best_score.pth')
             else:
                 check_point = torch.load(CFG.OUTPUT_DIR+f'{CFG.model_name}_mean_fold{fold}_best_score.pth')
+            valid_folds[[str(c) for c in range(self.cfg.target_size)]] = check_point['preds']
             valid_folds['preds'] = check_point['preds'].argmax(1)
-            valid_folds = pd.concat([valid_folds, pd.DataFrame(check_point['preds'])], axis=1)
+
         return valid_folds
 
     def train(self, train_loader, unlab_loader, fold=0, epoch=0):
