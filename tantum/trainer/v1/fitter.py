@@ -32,29 +32,14 @@ class Fitter():
 
         self.xm = xm 
         self.pl = pl 
-        self.iidist = idist
+        self.idist = idist
 
-        # ====================================================
-        # optimizer 
-        # ====================================================
-        ### Create optimizer
-        # optimizer = Adam(model.parameters(), lr=CFG.lr, weight_decay=CFG.weight_decay, amsgrad=False)
-        self.optimizer = optimizer(self.model.parameters(), **optimizer_params)
+        self.optimizer = optimizer
+        self.optimizer_params = optimizer_params
+
+        self.sheduler = sheduler
+
         
-        # ====================================================
-        # scheduler 
-        # ====================================================
-        ### Create scheduler
-        if sheduler:
-            self.scheduler = get_scheduler(cfg, self.optimizer)
-        
-        # ====================================================
-        # criterion 
-        # ====================================================
-        ### Create criterion
-        self.criterion = get_criterion(cfg, device)
-        
-        LOGGER.info(f'Fitter prepared. Device is {self.device}')
     
     def fit(self, CFG, fold, train_loader, valid_loader, valid_folds):
         LOGGER.info(f"========== Base Fitter ==========")
@@ -62,10 +47,35 @@ class Fitter():
         
         
         valid_labels = valid_folds[CFG.target_col].values
-        
+
+        if self.cfg.device == 'TPU':
+            self.device = self.xm.xla_device(fold+1)
+            self.xm.set_rng_state(CFG.seed, self.device)
+
+
         self.model.to(self.device)
+        # ====================================================
+        # optimizer 
+        # ====================================================
+        ### Create optimizer
+        # optimizer = Adam(model.parameters(), lr=CFG.lr, weight_decay=CFG.weight_decay, amsgrad=False)
+        self.optimizer = self.optimizer(self.model.parameters(), **self.optimizer_params)
         
-    
+        # ====================================================
+        # scheduler 
+        # ====================================================
+        ### Create scheduler
+        if self.sheduler:
+            self.scheduler = get_scheduler(self.cfg, self.optimizer)
+        
+        # ====================================================
+        # criterion 
+        # ====================================================
+        ### Create criterion
+        self.criterion = get_criterion(self.cfg, self.device)
+        
+        LOGGER.info(f'Fitter prepared. Device is {self.device}')
+        
         
         best_score = 0.
         best_loss = np.inf
@@ -81,8 +91,9 @@ class Fitter():
                 if CFG.nprocs == 1:
                     avg_loss = self.train(train_loader, fold, epoch)
                 elif CFG.nprocs > 1:
-                    para_train_loader = self.pl.ParallelLoader(train_loader, [self.device])
-                    avg_loss = self.train(para_train_loader.per_device_loader(self.device),  fold, epoch)
+                    # para_train_loader = self.pl.ParallelLoader(train_loader, [self.device])
+                    # avg_loss = self.train(para_train_loader.per_device_loader(self.device),  fold, epoch)
+                    avg_loss = self.train(train_loader, fold, epoch)
             elif CFG.device == 'GPU':
                     avg_loss = self.train(train_loader, fold, epoch)
             
@@ -93,10 +104,11 @@ class Fitter():
                 if CFG.nprocs == 1:
                     avg_val_loss, preds, _ = self.validation(valid_loader, fold)
                 elif CFG.nprocs > 1:
-                    para_valid_loader = self.pl.ParallelLoader(valid_loader, [self.device])
-                    avg_val_loss, preds, valid_labels = self.validation(para_valid_loader.per_device_loader(self.device), fold)
-                    preds = self.idist.all_gather(torch.tensor(preds)).to('cpu').numpy()
-                    valid_labels = self.idist.all_gather(torch.tensor(valid_labels)).to('cpu').numpy()
+                    # para_valid_loader = self.pl.ParallelLoader(valid_loader, [self.device])
+                    # avg_val_loss, preds, valid_labels = self.validation(para_valid_loader.per_device_loader(self.device), fold)
+                    # preds = self.idist.all_gather(torch.tensor(preds)).to('cpu').numpy()
+                    # valid_labels = self.idist.all_gather(torch.tensor(valid_labels)).to('cpu').numpy()
+                    avg_val_loss, preds, _ = self.validation(valid_loader, fold)
             elif CFG.device == 'GPU':
                     avg_val_loss, preds, _ = self.validation(valid_loader, fold)
             
@@ -126,8 +138,8 @@ class Fitter():
                     LOGGER.info(f'Epoch {epoch+1} - Fold {fold} - avg_train_loss: {avg_loss:.4f}  avg_val_loss: {avg_val_loss:.4f}  time: {elapsed:.0f}s')
                     LOGGER.info(f'Epoch {epoch+1} - Fold {fold} - Score: {score:.4f}')
                 elif CFG.nprocs > 1:
-                    self.xm.master_print(f'Epoch {epoch+1} - Fold {fold} - avg_train_loss: {avg_loss:.4f}  avg_val_loss: {avg_val_loss:.4f}  time: {elapsed:.0f}s')
-                    self.xm.master_print(f'Epoch {epoch+1} - Fold {fold} - Score: {score:.4f}')
+                    LOGGER.info(f'Epoch {epoch+1} - Fold {fold} - avg_train_loss: {avg_loss:.4f}  avg_val_loss: {avg_val_loss:.4f}  time: {elapsed:.0f}s')
+                    LOGGER.info(f'Epoch {epoch+1} - Fold {fold} - Score: {score:.4f}')
             
             if score > best_score:
                 best_score = score
@@ -140,7 +152,7 @@ class Fitter():
                     if CFG.nprocs == 1:
                         LOGGER.info(f'Epoch {epoch+1} - Fold {fold} - Save Best Score: {best_score:.4f} Model')
                     elif CFG.nprocs > 1:
-                        self.xm.master_print(f'Epoch {epoch+1} - Fold {fold} - Save Best Score: {best_score:.4f} Model')
+                        LOGGER.info(f'Epoch {epoch+1} - Fold {fold} - Save Best Score: {best_score:.4f} Model')
                     self.xm.save({'model': self.model, 
                             'preds': preds}, 
                             CFG.OUTPUT_DIR+f'{CFG.model_name}_fold{fold}_best_score.pth')
@@ -204,15 +216,23 @@ class Fitter():
                     global_step += 1
                             
             elif self.cfg.device == 'TPU':
-                y_preds = self.model(images)
-                loss = self.criterion(y_preds, labels)
+                y_preds = self.model(images.float())
+                
+                if mix_decision < 0.50 and (self.cfg.fmix or self.cfg.cutmix):
+                    loss = self.criterion(y_preds, labels[0]) * labels[2] + self.criterion(y_preds, labels[1]) * (1. - labels[2])
+                else:
+                    loss = self.criterion(y_preds, labels)
+                
                 # record loss
-                losses.update(loss.item(), batch_size)
                 if self.cfg.gradient_accumulation_steps > 1:
                     loss = loss / self.cfg.gradient_accumulation_steps
+                
+                losses.update(loss.item(), batch_size)
                 loss.backward()
-                grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.max_grad_norm)
                 if (step + 1) % self.cfg.gradient_accumulation_steps == 0:
+
+                    grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.max_grad_norm)
+
                     self.xm.optimizer_step(self.optimizer, barrier=True)
                     self.optimizer.zero_grad()
                     global_step += 1
@@ -221,7 +241,7 @@ class Fitter():
             end = time.time()
             if self.cfg.device == 'GPU':
                 if step % self.cfg.print_freq == 0 or step == (len(train_loader)-1):
-                    print('Epoch: [{0}][{1}/{2}] '
+                    LOGGER.info('Epoch: [{0}][{1}/{2}] '
                         'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
                         'Elapsed {remain:s} '
                         'Loss: {loss.val:.4f}({loss.avg:.4f}) '
@@ -238,7 +258,7 @@ class Fitter():
                         ))
             elif self.cfg.device == 'TPU':
                 if step % self.cfg.print_freq == 0 or step == (len(train_loader)-1):
-                    self.xm.master_print('Epoch: [{0}][{1}/{2}] '
+                    LOGGER.info('Epoch: [{0}][{1}/{2}] '
                                     'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
                                     'Elapsed {remain:s} '
                                     'Loss: {loss.val:.4f}({loss.avg:.4f}) '
@@ -287,7 +307,7 @@ class Fitter():
             end = time.time()
             if self.cfg.device == 'GPU':
                 if step % self.cfg.print_freq == 0 or step == (len(valid_loader)-1):
-                    print('EVAL: [{0}/{1}] '
+                    LOGGER.info('EVAL: [{0}/{1}] '
                         'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
                         'Elapsed {remain:s} '
                         'Loss: {loss.val:.4f}({loss.avg:.4f}) '
@@ -300,7 +320,7 @@ class Fitter():
                         ))
             elif self.cfg.device == 'TPU':
                 if step % self.cfg.print_freq == 0 or step == (len(valid_loader)-1):
-                    self.xm.master_print('EVAL: [{0}/{1}] '
+                    LOGGER.info('EVAL: [{0}/{1}] '
                                     'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
                                     'Elapsed {remain:s} '
                                     'Loss: {loss.val:.4f}({loss.avg:.4f}) '
