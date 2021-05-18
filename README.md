@@ -157,10 +157,9 @@ https://github.com/freedom1810/kaggle-cassava
 ### Vision
 
 - [x] Base fitter with GPU
-- [ ] Base fitter with TPU
-- [ ] Parallel fold training on TPU (Fitter)
+- [x] Base fitter with TPU
+- [x] Parallel fold training on TPU (Fitter)
 - [ ] Parallel models training on TPU (Fitter)
-- [ ] Base fitter with TPU
 - [x] Mean Teacher with GPU
 - [ ] Mean Teacher with TPU
 - [x] Mixed Precision Training
