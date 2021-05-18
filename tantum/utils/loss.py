@@ -410,4 +410,6 @@ def get_criterion(cfg, device):
         criterion = BiTemperedLogisticLoss(t1=cfg.t1, t2=cfg.t2, smoothing=cfg.smoothing)
     elif cfg.criterion=='TaylorCrossEntropyLoss':
         criterion = TaylorCrossEntropyLoss(smoothing=cfg.smoothing)
+    elif cfg.criterion == 'BCEWithLogitsLoss':
+        criterion = nn.BCEWithLogitsLoss() 
     return criterion

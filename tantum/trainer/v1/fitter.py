@@ -14,6 +14,7 @@ from tantum.utils.loss import get_criterion
 from tantum.utils.logger import LOGGER
 from tantum.utils.metrics import AverageMeter, timeSince
 
+
 class Fitter():
 
     def __init__(
@@ -48,8 +49,8 @@ class Fitter():
         
         valid_labels = valid_folds[CFG.target_col].values
 
-        if self.cfg.device == 'TPU':
-            self.device = self.xm.xla_device(fold+1)
+        if CFG.device == 'TPU':
+            self.device = self.xm.xla_device()
             self.xm.set_rng_state(CFG.seed, self.device)
 
 
@@ -66,13 +67,13 @@ class Fitter():
         # ====================================================
         ### Create scheduler
         if self.sheduler:
-            self.scheduler = get_scheduler(self.cfg, self.optimizer)
+            self.scheduler = get_scheduler(CFG, self.optimizer)
         
         # ====================================================
         # criterion 
         # ====================================================
         ### Create criterion
-        self.criterion = get_criterion(self.cfg, self.device)
+        self.criterion = get_criterion(CFG, self.device)
         
         LOGGER.info(f'Fitter prepared. Device is {self.device}')
         
@@ -93,7 +94,9 @@ class Fitter():
                 elif CFG.nprocs > 1:
                     # para_train_loader = self.pl.ParallelLoader(train_loader, [self.device])
                     # avg_loss = self.train(para_train_loader.per_device_loader(self.device),  fold, epoch)
-                    avg_loss = self.train(train_loader, fold, epoch)
+                    mp_device_loader = self.pl.MpDeviceLoader(train_loader, self.device)
+
+                    avg_loss = self.train(mp_device_loader, fold, epoch)
             elif CFG.device == 'GPU':
                     avg_loss = self.train(train_loader, fold, epoch)
             
@@ -108,7 +111,8 @@ class Fitter():
                     # avg_val_loss, preds, valid_labels = self.validation(para_valid_loader.per_device_loader(self.device), fold)
                     # preds = self.idist.all_gather(torch.tensor(preds)).to('cpu').numpy()
                     # valid_labels = self.idist.all_gather(torch.tensor(valid_labels)).to('cpu').numpy()
-                    avg_val_loss, preds, _ = self.validation(valid_loader, fold)
+                    mp_device_loader = self.pl.MpDeviceLoader(valid_loader, self.device)
+                    avg_val_loss, preds, _ = self.validation(mp_device_loader, fold)
             elif CFG.device == 'GPU':
                     avg_val_loss, preds, _ = self.validation(valid_loader, fold)
             
@@ -160,7 +164,7 @@ class Fitter():
         
         if CFG.nprocs != 8:
             check_point = torch.load(CFG.OUTPUT_DIR+f'{CFG.model_name}_fold{fold}_best_score.pth')
-            valid_folds[[str(c) for c in range(self.cfg.target_size)]] = check_point['preds']
+            valid_folds[[str(c) for c in range(CFG.target_size)]] = check_point['preds']
             valid_folds['preds'] = check_point['preds'].argmax(1)
 
         return valid_folds
@@ -179,15 +183,15 @@ class Fitter():
         for step, (images, labels) in enumerate(train_loader):
             # measure data loading time
             data_time.update(time.time() - end)
-            images = images.to(self.device).float()
-            labels = labels.to(self.device).long()
+            images = images.to(self.device)
+            labels = labels.to(self.device)
             batch_size = labels.size(0)
             
             mix_decision = np.random.rand()
             if mix_decision < 0.25 and self.cfg.cutmix:
                 images, labels = cutmix(images, labels, 1.)
             elif mix_decision >= 0.25 and mix_decision < 0.5 and self.cfg.fmix:
-                images, labels = fmix(images, labels, alpha=1., decay_power=5., shape=(512,512), device=self.device)
+                images, labels = fmix(images, labels, alpha=1., decay_power=5., shape=(self.cfg.size, self.cfg.size), device=self.device)
 
             if self.cfg.device == 'GPU':
                 with autocast():
@@ -196,7 +200,7 @@ class Fitter():
                     if mix_decision < 0.50 and (self.cfg.fmix or self.cfg.cutmix):
                         loss = self.criterion(y_preds, labels[0]) * labels[2] + self.criterion(y_preds, labels[1]) * (1. - labels[2])
                     else:
-                        loss = self.criterion(y_preds, labels)
+                        loss = self.criterion(y_preds.view(-1), labels)
                 
                 # record loss
                 if self.cfg.gradient_accumulation_steps > 1:
@@ -216,6 +220,8 @@ class Fitter():
                     global_step += 1
                             
             elif self.cfg.device == 'TPU':
+                self.optimizer.zero_grad()
+
                 y_preds = self.model(images.float())
                 
                 if mix_decision < 0.50 and (self.cfg.fmix or self.cfg.cutmix):
@@ -229,13 +235,18 @@ class Fitter():
                 
                 losses.update(loss.item(), batch_size)
                 loss.backward()
+                # scaler.scale(loss).backward()
                 if (step + 1) % self.cfg.gradient_accumulation_steps == 0:
+                    gradients = self.xm._fetch_gradients(self.optimizer)
+                    self.xm.all_reduce('sum', gradients, scale=1.0 / self.xm.xrt_world_size())
+                    self.xm.mark_step()
 
-                    grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.max_grad_norm)
+                # if (step + 1) % self.cfg.gradient_accumulation_steps == 0:
 
-                    self.xm.optimizer_step(self.optimizer, barrier=True)
-                    self.optimizer.zero_grad()
-                    global_step += 1
+                #     # grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.max_grad_norm)
+                #     self.xm.reduce_gradients(self.optimizer)
+                #     self.xm.optimizer_step(self.optimizer, barrier=True)
+                #     global_step += 1
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
@@ -246,14 +257,16 @@ class Fitter():
                         'Elapsed {remain:s} '
                         'Loss: {loss.val:.4f}({loss.avg:.4f}) '
                         'Grad: {grad_norm:.4f}  '
-                        'Fold: {fold}'
+                        'Fold: {fold} '
+                        'Model: {model_name} '
                         #'LR: {lr:.6f}  '
                         .format(
                         epoch+1, step, len(train_loader), batch_time=batch_time,
                         data_time=data_time, loss=losses,
                         remain=timeSince(start, float(step+1)/len(train_loader)),
                         grad_norm=grad_norm,
-                        fold=fold
+                        fold=fold,
+                        model_name=self.cfg.model_name
                         #lr=scheduler.get_lr()[0],
                         ))
             elif self.cfg.device == 'TPU':
@@ -262,15 +275,17 @@ class Fitter():
                                     'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
                                     'Elapsed {remain:s} '
                                     'Loss: {loss.val:.4f}({loss.avg:.4f}) '
-                                    'Grad: {grad_norm:.4f}  '
-                                    'Fold: {fold}'
+                                    # 'Grad: {grad_norm:.4f}  '
+                                    'Fold: {fold} '
+                                    'Model: {model_name} '
                                     #'LR: {lr:.6f}  '
                                     .format(
                                     epoch+1, step, len(train_loader), batch_time=batch_time,
                                     data_time=data_time, loss=losses,
                                     remain=timeSince(start, float(step+1)/len(train_loader)),
-                                    grad_norm=grad_norm,
-                                    fold=fold
+                                    # grad_norm=grad_norm,
+                                    fold=fold,
+                                    model_name=self.cfg.model_name
                                     #lr=scheduler.get_lr()[0],
                                     ))
         return losses.avg
@@ -295,7 +310,7 @@ class Fitter():
             # compute loss
             with torch.no_grad():
                 y_preds = self.model(images)
-            loss = self.criterion(y_preds, labels)
+            loss = self.criterion(y_preds.view(-1), labels)
             losses.update(loss.item(), batch_size)
             # record accuracy
             trues.append(labels.to('cpu').numpy())
@@ -311,12 +326,14 @@ class Fitter():
                         'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
                         'Elapsed {remain:s} '
                         'Loss: {loss.val:.4f}({loss.avg:.4f}) '
-                        'Fold: {fold}'
+                        'Fold: {fold} '
+                        'Model: {model_name} '
                         .format(
                         step, len(valid_loader), batch_time=batch_time,
                         data_time=data_time, loss=losses,
                         remain=timeSince(start, float(step+1)/len(valid_loader)),
-                        fold=fold
+                        fold=fold,
+                        model_name=self.cfg.model_name
                         ))
             elif self.cfg.device == 'TPU':
                 if step % self.cfg.print_freq == 0 or step == (len(valid_loader)-1):
@@ -324,12 +341,14 @@ class Fitter():
                                     'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
                                     'Elapsed {remain:s} '
                                     'Loss: {loss.val:.4f}({loss.avg:.4f}) '
-                                    'Fold: {fold}'
+                                    'Fold: {fold} '
+                                    'Model: {model_name} '
                                     .format(
                                     step, len(valid_loader), batch_time=batch_time,
                                     data_time=data_time, loss=losses,
                                     remain=timeSince(start, float(step+1)/len(valid_loader)),
-                                    fold=fold
+                                    fold=fold,
+                                    model_name=self.cfg.model_name
                                     ))
 
         trues = np.concatenate(trues)
