@@ -105,7 +105,6 @@ class RAdam(optim.Optimizer):
 
 def create_optimizer(params, config):
     if config.optim == 'sgd':
-        print(params, config.lr)
         optimizer = optim.SGD(params,
                               config.lr,
                               momentum=config.momentum,

@@ -2,53 +2,57 @@ from __future__ import print_function
 import torch 
 import torch.nn as nn 
 import torch.nn.functional as F 
-import torch.optim as optim 
-from torchvision import datasets, transforms
+# import torch.optim as optim 
+# from torchvision import datasets, transforms
 
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, TensorDataset, Dataset
-from torch.utils.data.sampler import SubsetRandomSampler
-from sklearn import model_selection
+# from torch.utils.data.sampler import SubsetRandomSampler
+# from sklearn import model_selection
 
 from sklearn.model_selection import StratifiedKFold
-import efficientnet_pytorch
-from torch.utils.data import Subset
+# import efficientnet_pytorch
+# from torch.utils.data import Subset
 
 import cv2
 import os 
-import sys
+import sys 
+
+PROJECT_ROOT = '/Users/dmitry/Documents/Personal/study/kaggle/tantum'
+sys.path.append(PROJECT_ROOT)
+
+
+# import sys
 import albumentations as A
 from albumentations.pytorch.transforms import ToTensorV2
 import random
 
-from torchvision.utils import make_grid
-from torch.autograd import Variable
+# from torchvision.utils import make_grid
+# from torch.autograd import Variable
 
 import pandas as pd
-import time
-from tqdm import tqdm
+# import time
+# from tqdm import tqdm
 from torch.optim import Adam, SGD
 
 
 
 from tantum.trainer.v1.fitter import Fitter
-from tantum.trainer.v1.mean_teacher import MeanTeacher
+# from tantum.trainer.v1.mean_teacher import MeanTeacher
 
-from tantum.utils.loss import get_criterion
-from tantum.scheduler.scheduler import get_scheduler
-from tantum.scheduler.scheduler import GradualWarmupSchedulerV2
+# from tantum.utils.loss import get_criterion
+# from tantum.scheduler.scheduler import get_scheduler
+# from tantum.scheduler.scheduler import GradualWarmupSchedulerV2
 
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
+# import matplotlib.pyplot as plt
+# from sklearn.model_selection import train_test_split
 
 class CFG:
     debug = False
-    weight_mean_teacher = 0.2
-    alpha_mean_teacher = 0.99
     weight_rampup = 30
-    apex = True
+    apex = False
     seed=42
     criterion = 'CrossEntropyLoss' 
     device= 'GPU'
@@ -96,7 +100,7 @@ def seed_everything(seed):
 
 seed_everything(CFG.seed)
 
-df = pd.read_csv('./train.csv')
+df = pd.read_csv(os.path.join(PROJECT_ROOT, 'train.csv') )
 
 if CFG.debug:
     CFG.n_epochs = 1

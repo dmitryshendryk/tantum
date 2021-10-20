@@ -257,3 +257,7 @@ $RECYCLE.BIN/
 output-template.yaml
 
 # End of https://www.gitignore.io/api/osx,linux,python,windows,pycharm,visualstudiocode
+
+
+data/
+tantum/examples/vision/lightning_logs/

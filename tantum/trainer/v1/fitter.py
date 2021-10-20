@@ -200,7 +200,7 @@ class Fitter():
                     if mix_decision < 0.50 and (self.cfg.fmix or self.cfg.cutmix):
                         loss = self.criterion(y_preds, labels[0]) * labels[2] + self.criterion(y_preds, labels[1]) * (1. - labels[2])
                     else:
-                        loss = self.criterion(y_preds.view(-1), labels)
+                        loss = self.criterion(y_preds, labels)
                 
                 # record loss
                 if self.cfg.gradient_accumulation_steps > 1:
@@ -310,7 +310,7 @@ class Fitter():
             # compute loss
             with torch.no_grad():
                 y_preds = self.model(images)
-            loss = self.criterion(y_preds.view(-1), labels)
+            loss = self.criterion(y_preds, labels)
             losses.update(loss.item(), batch_size)
             # record accuracy
             trues.append(labels.to('cpu').numpy())
