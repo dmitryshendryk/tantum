@@ -2,17 +2,11 @@ from __future__ import print_function
 import torch 
 import torch.nn as nn 
 import torch.nn.functional as F 
-# import torch.optim as optim 
-# from torchvision import datasets, transforms
 
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, TensorDataset, Dataset
-# from torch.utils.data.sampler import SubsetRandomSampler
-# from sklearn import model_selection
 
 from sklearn.model_selection import StratifiedKFold
-# import efficientnet_pytorch
-# from torch.utils.data import Subset
 
 import cv2
 import os 
@@ -27,27 +21,16 @@ import albumentations as A
 from albumentations.pytorch.transforms import ToTensorV2
 import random
 
-# from torchvision.utils import make_grid
-# from torch.autograd import Variable
 
 import pandas as pd
-# import time
-# from tqdm import tqdm
 from torch.optim import Adam, SGD
 
 
 
 from tantum.trainer.v1.fitter import Fitter
-# from tantum.trainer.v1.mean_teacher import MeanTeacher
-
-# from tantum.utils.loss import get_criterion
-# from tantum.scheduler.scheduler import get_scheduler
-# from tantum.scheduler.scheduler import GradualWarmupSchedulerV2
 
 import pandas as pd
 import numpy as np
-# import matplotlib.pyplot as plt
-# from sklearn.model_selection import train_test_split
 
 class CFG:
     debug = False
@@ -106,7 +89,6 @@ if CFG.debug:
     CFG.n_epochs = 1
     df = df.sample(n=1000, random_state=CFG.seed).reset_index(drop=True)
 
-df = df.sample(n=1000, random_state=CFG.seed).reset_index(drop=True)
 
 folds = df.copy()
 Fold = StratifiedKFold(n_splits=CFG.n_fold, shuffle=True, random_state=CFG.seed)
