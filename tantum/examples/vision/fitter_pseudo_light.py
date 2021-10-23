@@ -106,7 +106,7 @@ def create_loaders_v2(trainset, evalset, label_idxs, unlab_idxs,
                                            drop_last=False)
     return label_loader, unlab_loader, eval_loader
 
-data =   mnist(60000, data_root='../../../data')
+data =   mnist(10000, data_root='../../../data')
 loaders = create_loaders_v2(**data)
 
 class MyFitter(FitterPseudoLightining):
