@@ -3,9 +3,13 @@ import warnings
 import psutil
 import torch
 import torch.nn as nn
+import numpy as np
+
 from tantum import enums
+from tantum.utils.metrics import get_score
 from tantum.callbacks import CallbackRunner
 from tantum.utils import AverageMeter
+
 from tqdm.auto import tqdm
 
 from tqdm import tqdm
@@ -49,6 +53,20 @@ class Model(nn.Module):
         self.metrics["test"] = {}
         self.clip_grad_norm = None
         self.using_tpu = False
+
+        ## OOF data structure
+        self.predictions = {}
+        self.predictions["train"] = {'preds': None, 'labels': None}
+        self.predictions["valid"] = {'preds': None, 'labels': None}
+
+        ## Valid labels 
+        self.valid_labels = None
+
+        self.valid_folds = None
+        self.target_size = None
+        self.fold = None
+
+
 
     @property
     def model_state(self):
@@ -170,7 +188,7 @@ class Model(nn.Module):
     def train_one_step(self, data):
         if self.accumulation_steps == 1 and self.batch_index == 0:
             self.zero_grad()
-        _, loss, metrics = self.model_fn(data)
+        output, loss, metrics = self.model_fn(data)
         loss = loss / self.accumulation_steps
         if self.fp16:
             self.scaler.scale(loss).backward()
@@ -196,11 +214,11 @@ class Model(nn.Module):
                         self.scheduler.step(step_metric)
             if self.batch_index > 0:
                 self.zero_grad()
-        return loss, metrics
+        return output, loss, metrics
 
     def validate_one_step(self, data):
-        _, loss, metrics = self.model_fn(data)
-        return loss, metrics
+        output, loss, metrics = self.model_fn(data)
+        return output, loss, metrics
 
     def predict_one_step(self, data):
         output, _, _ = self.model_fn(data)
@@ -223,7 +241,7 @@ class Model(nn.Module):
         for b_idx, data in enumerate(tk0):
             self.batch_index = b_idx
             self.train_state = enums.TrainingState.TRAIN_STEP_START
-            loss, metrics = self.train_one_step(data)
+            _, loss, metrics = self.train_one_step(data)
             self.train_state = enums.TrainingState.TRAIN_STEP_END
             losses.update(loss.item(), data_loader.batch_size)
             if b_idx == 0:
@@ -241,11 +259,14 @@ class Model(nn.Module):
         if not self.using_tpu:
             tk0.close()
         self.update_metrics(losses=losses, monitor=monitor)
-
         return losses.avg
 
     def validate_one_epoch(self, data_loader, epoch):
         self.eval()
+        
+        trues = []
+        preds = []
+
         self.model_state = enums.ModelState.VALID
         losses = AverageMeter()
         if self.using_tpu:
@@ -255,7 +276,12 @@ class Model(nn.Module):
         for b_idx, data in enumerate(tk0):
             self.train_state = enums.TrainingState.VALID_STEP_START
             with torch.no_grad():
-                loss, metrics = self.validate_one_step(data)
+                output, loss, metrics = self.validate_one_step(data)
+            
+            ### Save preds and labels to create OOF
+            trues.append(data['targets'].to('cpu').numpy())
+            preds.append(output.softmax(1).to('cpu').numpy())
+
             self.train_state = enums.TrainingState.VALID_STEP_END
             losses.update(loss.item(), data_loader.batch_size)
             if b_idx == 0:
@@ -271,6 +297,19 @@ class Model(nn.Module):
         if not self.using_tpu:
             tk0.close()
         self.update_metrics(losses=losses, monitor=monitor)
+        
+        trues = np.concatenate(trues)
+        predictions = np.concatenate(preds)
+        
+        ## Later usage of preds and labels in callbacks
+        self.predictions[self._model_state.value]['preds'] = predictions
+        self.predictions[self._model_state.value]['labels'] = trues
+        self.predictions[self._model_state.value]['valid_labels'] = self.valid_labels
+        self.predictions[self._model_state.value]['valid_folds'] = self.valid_folds
+
+        # score = get_score(self.valid_labels, predictions.argmax(1))
+        # print(score)
+        
         return losses.avg
 
     def process_output(self, output):
@@ -372,6 +411,10 @@ class Model(nn.Module):
         valid_shuffle=False,
         accumulation_steps=1,
         clip_grad_norm=None,
+        valid_labels=None,
+        valid_folds=None,
+        target_size=None,
+        fold=None
     ):
         """
         The model fit function. Heavily inspired by tf/keras, this function is the core of Tez and this is the only
@@ -402,6 +445,12 @@ class Model(nn.Module):
             accumulation_steps=accumulation_steps,
             clip_grad_norm=clip_grad_norm,
         )
+        
+        self.valid_labels = valid_labels
+        self.valid_folds = valid_folds
+        self.target_size = target_size
+        self.fold = fold
+        
 
         for epoch in range(epochs):
             self.train_state = enums.TrainingState.EPOCH_START

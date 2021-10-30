@@ -261,3 +261,6 @@ output-template.yaml
 
 data/
 tantum/examples/vision/lightning_logs/
+
+tantum/examples/vision/.logs/
+tantum/examples/vision/wandb/

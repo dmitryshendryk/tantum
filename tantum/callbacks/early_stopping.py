@@ -28,6 +28,7 @@ class EarlyStopping(Callback):
             raise Exception("monitor must start with train_ or valid_")
 
     def on_epoch_end(self, model):
+        print("Early Stope Callback")
         epoch_score = model.metrics[self.model_state][self.monitor_value]
         if self.mode == "min":
             score = -1.0 * epoch_score

@@ -14,7 +14,10 @@ import torch
 import torch.nn as nn
 from efficientnet_pytorch import EfficientNet
 from sklearn import metrics, model_selection, preprocessing
-from tantum.callbacks import EarlyStopping
+
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, CosineAnnealingLR, ReduceLROnPlateau
+
+from tantum.callbacks import EarlyStopping, OutOfFold, WeightAndBiasesCallback, Checkpoint
 from tantum.datasets.datasets import ImageDataset
 from tantum.trainer.v1.base_fitter import Model
 from torch.nn import functional as F
@@ -29,11 +32,16 @@ VALID_BATCH_SIZE = 32
 IMAGE_SIZE = 192
 EPOCHS = 20
 
+class Config:
+    target_size=10
+    
+
 
 class MnistModel(Model):
     def __init__(self):
         super().__init__()
         self.model = Net()
+        self.opt = torch.optim.Adam(self.parameters(), lr=1e-4)
 
     def monitor_metrics(self, outputs, targets):
         outputs = torch.argmax(outputs, dim=1).cpu().detach().numpy()
@@ -41,9 +49,13 @@ class MnistModel(Model):
         accuracy = metrics.accuracy_score(targets, outputs)
         return {"accuracy": accuracy}
 
+    def fetch_scheduler(self):
+        scheduler = CosineAnnealingWarmRestarts(self.opt, T_0=10, T_mult=1, eta_min=1e-4, last_epoch=-1)
+        return scheduler
+
     def fetch_optimizer(self):
-        opt = torch.optim.Adam(self.parameters(), lr=1e-4)
-        return opt
+        # opt = torch.optim.Adam(self.parameters(), lr=1e-4)
+        return self.opt
 
     def forward(self, image, targets=None):
         
@@ -59,16 +71,25 @@ class MnistModel(Model):
 if __name__ == "__main__":
 
 
-
+    ## Reading Data
     df = pd.read_csv(os.path.join(PROJECT_ROOT, 'train.csv') )
+    ## Create Folds
     folds = create_folds(df, 5)
 
-    es = EarlyStopping(
+    ## Callbacks 
+
+    oof_callback = OutOfFold(output_path='./')
+    
+    es_callback = EarlyStopping(
         monitor="valid_loss",
-        model_path=os.path.join(MODEL_PATH, MODEL_NAME + ".bin"),
+        model_path=os.path.join('./', 'mnist' + ".pt"),
         patience=3,
         mode="min",
     )
+
+    chc_callback = Checkpoint(save_path='./', file_name='mnist_checkpoint')
+
+    wb_callback = WeightAndBiasesCallback(project='mnist')
 
     for fold in range(5):
 
@@ -86,6 +107,9 @@ if __name__ == "__main__":
         y_val = valid_folds['label'].values
         X_val = valid_folds.drop(['label','fold'], axis=1).values
 
+        
+        valid_labels = valid_folds['label'].values
+        
         train_dataset = MnistDataset(
             X = X,
             y = y,
@@ -103,7 +127,11 @@ if __name__ == "__main__":
             valid_bs=VALID_BATCH_SIZE,
             device="cpu",
             epochs=EPOCHS,
-            callbacks=[es],
+            callbacks=[es_callback, oof_callback, chc_callback, wb_callback],
             fp16=False,
-            n_jobs=0
+            n_jobs=0,
+            valid_labels=valid_labels,
+            valid_folds=valid_folds,
+            target_size=10,
+            fold=fold
         )
