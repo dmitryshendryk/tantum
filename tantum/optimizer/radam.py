@@ -6,7 +6,6 @@ from torch import optim
 
 
 
-
 """ 
 On the Variance of the Adaptive Learning Rate and Beyond (https://arxiv.org/abs/1908.03265)
 Code Reference: https://github.com/LiyuanLucasLiu/RAdam
@@ -102,16 +101,3 @@ class RAdam(optim.Optimizer):
 
         return loss
 
-
-def create_optimizer(params, config):
-    if config.optim == 'sgd':
-        optimizer = optim.SGD(params,
-                              config.lr,
-                              momentum=config.momentum,
-                              weight_decay=config.weight_decay,
-                              nesterov=config.nesterov)
-    
-    elif config.optim == 'adam':
-        optimizer = optim.Adam(params, config.lr)
-    
-    return optimizer

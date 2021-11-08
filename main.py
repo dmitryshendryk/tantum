@@ -11,6 +11,7 @@ from tantum.optimizer.optimizer import create_optimizer
 from tantum.scheduler.scheduler import create_lr_scheduler
 from tantum.trainer import mean_teacher
 
+from tantum.model import get_model
 
 build_model = {
     'mtv2': mean_teacher.Trainer

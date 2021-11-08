@@ -22,3 +22,6 @@ class WeightAndBiasesCallback(Callback):
         print("Weights and Biases Call")
         wandb.log(model.metrics)
         wandb.watch(model)
+    
+    def log(self, logs):
+        wandb.log(logs)

@@ -151,7 +151,7 @@ class Model(nn.Module):
             self.optimizer = self.fetch_optimizer()
 
         if self.scheduler is None:
-            self.scheduler = self.fetch_scheduler()
+            self.scheduler = self.fetch_scheduler(self.train_loader)
 
         self.fp16 = fp16
         if self.fp16:

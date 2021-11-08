@@ -5,85 +5,44 @@ from torch.nn import functional as F
 
 
 
-class LabelSmoothing(nn.Module):
+def compute_normalization_binary_search(activations, t, num_iters):
+
+    """Returns the normalization value for each example (t < 1.0).
+    Args:
+      activations: A multi-dimensional tensor with last dimension `num_classes`.
+      t: Temperature 2 (< 1.0 for finite support).
+      num_iters: Number of iterations to run the method.
+    Return: A tensor of same rank as activation with the last dimension being 1.
     """
-    NLL loss with label smoothing.
-    """
-    def __init__(self, smoothing=0.0):
-        """
-        Constructor for the LabelSmoothing module.
-        :param smoothing: label smoothing factor
-        """
-        super(LabelSmoothing, self).__init__()
-        self.confidence = 1.0 - smoothing
-        self.smoothing = smoothing
 
-    def forward(self, x, target):
-        logprobs = torch.nn.functional.log_softmax(x, dim=-1)
+    mu, _ = torch.max(activations, -1, keepdim=True)
+    normalized_activations = activations - mu
 
-        nll_loss = -logprobs.gather(dim=-1, index=target.unsqueeze(1))
-        nll_loss = nll_loss.squeeze(1)
-        smooth_loss = -logprobs.mean(dim=-1)
-        loss = self.confidence * nll_loss + self.smoothing * smooth_loss
-        return loss.mean()
+    effective_dim = \
+        torch.sum(
+                (normalized_activations > -1.0 / (1.0-t)).to(torch.int32),
+            dim=-1, keepdim=True).to(activations.dtype)
 
-class FocalLoss(nn.Module):
-    def __init__(self, alpha=1, gamma=2, reduce=True):
-        super(FocalLoss, self).__init__()
-        self.alpha = alpha
-        self.gamma = gamma
-        self.reduce = reduce
+    shape_partition = activations.shape[:-1] + (1,)
+    lower = torch.zeros(shape_partition, dtype=activations.dtype, device=activations.device)
+    upper = -log_t(1.0/effective_dim, t) * torch.ones_like(lower)
 
-    def forward(self, inputs, targets):
-        BCE_loss = nn.CrossEntropyLoss()(inputs, targets)
+    for _ in range(num_iters):
+        logt_partition = (upper + lower)/2.0
+        sum_probs = torch.sum(
+                exp_t(normalized_activations - logt_partition, t),
+                dim=-1, keepdim=True)
+        update = (sum_probs < 1.0).to(activations.dtype)
+        lower = torch.reshape(
+                lower * update + (1.0-update) * logt_partition,
+                shape_partition)
+        upper = torch.reshape(
+                upper * (1.0 - update) + update * logt_partition,
+                shape_partition)
 
-        pt = torch.exp(-BCE_loss)
-        F_loss = self.alpha * (1-pt)**self.gamma * BCE_loss
+    logt_partition = (upper + lower)/2.0
+    return logt_partition + mu
 
-        if self.reduce:
-            return torch.mean(F_loss)
-        else:
-            return F_loss
-
-class FocalCosineLoss(nn.Module):
-    def __init__(self, alpha=1, gamma=2, xent=.1):
-        super(FocalCosineLoss, self).__init__()
-        self.alpha = alpha
-        self.gamma = gamma
-
-        self.xent = xent
-
-        self.y = torch.Tensor([1]).cuda()
-
-    def forward(self, input, target, reduction="mean"):
-        cosine_loss = F.cosine_embedding_loss(input, F.one_hot(target, num_classes=input.size(-1)), self.y, reduction=reduction)
-
-        cent_loss = F.cross_entropy(F.normalize(input), target, reduce=False)
-        pt = torch.exp(-cent_loss)
-        focal_loss = self.alpha * (1-pt)**self.gamma * cent_loss
-
-        if reduction == "mean":
-            focal_loss = torch.mean(focal_loss)
-
-        return cosine_loss + self.xent * focal_loss
-
-class SymmetricCrossEntropy(nn.Module):
-
-    def __init__(self, alpha=0.1, beta=1.0, num_classes=5):
-        super(SymmetricCrossEntropy, self).__init__()
-        self.alpha = alpha
-        self.beta = beta
-        self.num_classes = num_classes
-
-    def forward(self, logits, targets, reduction='mean'):
-        onehot_targets = torch.eye(self.num_classes)[targets].cuda()
-        ce_loss = F.cross_entropy(logits, targets, reduction=reduction)
-        rce_loss = (-onehot_targets*logits.softmax(1).clamp(1e-7, 1.0).log()).sum(1)
-        if reduction == 'mean':
-            rce_loss = rce_loss.mean()
-        elif reduction == 'sum':
-            rce_loss = rce_loss.sum()
-        return self.alpha * ce_loss + self.beta * rce_loss
 
 def log_t(u, t):
     """Compute log_t for `u'."""
@@ -125,43 +84,6 @@ def compute_normalization_fixed_point(activations, t, num_iters):
 
     return normalization_constants
 
-def compute_normalization_binary_search(activations, t, num_iters):
-
-    """Returns the normalization value for each example (t < 1.0).
-    Args:
-      activations: A multi-dimensional tensor with last dimension `num_classes`.
-      t: Temperature 2 (< 1.0 for finite support).
-      num_iters: Number of iterations to run the method.
-    Return: A tensor of same rank as activation with the last dimension being 1.
-    """
-
-    mu, _ = torch.max(activations, -1, keepdim=True)
-    normalized_activations = activations - mu
-
-    effective_dim = \
-        torch.sum(
-                (normalized_activations > -1.0 / (1.0-t)).to(torch.int32),
-            dim=-1, keepdim=True).to(activations.dtype)
-
-    shape_partition = activations.shape[:-1] + (1,)
-    lower = torch.zeros(shape_partition, dtype=activations.dtype, device=activations.device)
-    upper = -log_t(1.0/effective_dim, t) * torch.ones_like(lower)
-
-    for _ in range(num_iters):
-        logt_partition = (upper + lower)/2.0
-        sum_probs = torch.sum(
-                exp_t(normalized_activations - logt_partition, t),
-                dim=-1, keepdim=True)
-        update = (sum_probs < 1.0).to(activations.dtype)
-        lower = torch.reshape(
-                lower * update + (1.0-update) * logt_partition,
-                shape_partition)
-        upper = torch.reshape(
-                upper * (1.0 - update) + update * logt_partition,
-                shape_partition)
-
-    logt_partition = (upper + lower)/2.0
-    return logt_partition + mu
 
 class ComputeNormalization(torch.autograd.Function):
     """
@@ -382,19 +304,19 @@ def mse_with_softmax(logit1, logit2):
 
 def get_criterion(cfg, device):
     if cfg.criterion=='CrossEntropyLoss':
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss().to(device)
     elif cfg.criterion=='LabelSmoothing':
-        criterion = LabelSmoothing(smoothing=cfg.smoothing)
+        criterion = LabelSmoothing(smoothing=cfg.smoothing).to(device)
     elif cfg.criterion=='FocalLoss':
         criterion = FocalLoss().to(device)
     elif cfg.criterion=='FocalCosineLoss':
-        criterion = FocalCosineLoss()
+        criterion = FocalCosineLoss().to(device)
     elif cfg.criterion=='SymmetricCrossEntropyLoss':
         criterion = SymmetricCrossEntropy().to(device)
     elif cfg.criterion=='BiTemperedLoss':
-        criterion = BiTemperedLogisticLoss(t1=cfg.t1, t2=cfg.t2, smoothing=cfg.smoothing)
+        criterion = BiTemperedLogisticLoss(t1=cfg.t1, t2=cfg.t2, smoothing=cfg.smoothing).to(device)
     elif cfg.criterion=='TaylorCrossEntropyLoss':
-        criterion = TaylorCrossEntropyLoss(smoothing=cfg.smoothing)
+        criterion = TaylorCrossEntropyLoss(smoothing=cfg.smoothing).to(device)
     elif cfg.criterion == 'BCEWithLogitsLoss':
-        criterion = nn.BCEWithLogitsLoss() 
+        criterion = nn.BCEWithLogitsLoss().to(device)
     return criterion

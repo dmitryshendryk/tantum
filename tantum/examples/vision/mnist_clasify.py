@@ -3,6 +3,8 @@ from operator import imod
 import os
 import sys
 
+from warmup_scheduler import scheduler
+
 PROJECT_ROOT = '/Users/dmitry/Documents/Personal/study/kaggle/tantum'
 sys.path.append(PROJECT_ROOT)
 
@@ -24,6 +26,11 @@ from torch.nn import functional as F
 from tantum.model.simple_net import Net
 from tantum.datasets.datasets import create_folds, MnistDataset
 
+from tantum.model import get_model
+from tantum.optimizer import get_optimizer
+from tantum.loss import get_criterion
+from tantum.scheduler import get_scheduler
+
 INPUT_PATH = "../../../input"
 MODEL_PATH = "../models/"
 MODEL_NAME = os.path.basename(__file__)[:-3]
@@ -34,14 +41,22 @@ EPOCHS = 20
 
 class Config:
     target_size=10
+    model_type='Net'
+    optim='AdamW'
+    criterion='CrossEntropyLoss'
+    scheduler='CosineAnnealingWarmRestarts'
+    
+    
+    scheduler_params={'T_0':10, "last_epoch":-1, 'eta_min':1e-4, "T_mult":1}
     
 
 
 class MnistModel(Model):
     def __init__(self):
         super().__init__()
-        self.model = Net()
-        self.opt = torch.optim.Adam(self.parameters(), lr=1e-4)
+        self.model = get_model(Config)()
+        self.opt = get_optimizer(Config)(self.parameters(), lr=1e-4)
+        self.loss_fn = get_criterion(Config)()
 
     def monitor_metrics(self, outputs, targets):
         outputs = torch.argmax(outputs, dim=1).cpu().detach().numpy()
@@ -49,12 +64,11 @@ class MnistModel(Model):
         accuracy = metrics.accuracy_score(targets, outputs)
         return {"accuracy": accuracy}
 
-    def fetch_scheduler(self):
-        scheduler = CosineAnnealingWarmRestarts(self.opt, T_0=10, T_mult=1, eta_min=1e-4, last_epoch=-1)
+    def fetch_scheduler(self, train_loader):
+        scheduler = get_scheduler(Config)(self.opt, **Config.scheduler_params)
         return scheduler
 
     def fetch_optimizer(self):
-        # opt = torch.optim.Adam(self.parameters(), lr=1e-4)
         return self.opt
 
     def forward(self, image, targets=None):
@@ -62,7 +76,7 @@ class MnistModel(Model):
         outputs = self.model(image)
 
         if targets is not None:
-            loss = nn.CrossEntropyLoss()(outputs, targets)
+            loss = self.loss_fn(outputs, targets)
             metrics = self.monitor_metrics(outputs, targets)
             return outputs, loss, metrics
         return outputs, 0, {}
@@ -89,7 +103,7 @@ if __name__ == "__main__":
 
     chc_callback = Checkpoint(save_path='./', file_name='mnist_checkpoint')
 
-    wb_callback = WeightAndBiasesCallback(project='mnist')
+    # wb_callback = WeightAndBiasesCallback(project='mnist')
 
     for fold in range(5):
 
@@ -127,7 +141,7 @@ if __name__ == "__main__":
             valid_bs=VALID_BATCH_SIZE,
             device="cpu",
             epochs=EPOCHS,
-            callbacks=[es_callback, oof_callback, chc_callback, wb_callback],
+            callbacks=[],
             fp16=False,
             n_jobs=0,
             valid_labels=valid_labels,
