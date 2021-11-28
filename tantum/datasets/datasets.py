@@ -7,6 +7,7 @@ from tantum.datasets.data_utils import NO_LABEL
 from sklearn.model_selection import StratifiedKFold
 import cv2
 import torch
+import torch.nn.functional as F
 
 import numpy as np
 
@@ -92,7 +93,6 @@ class MnistDataset(Dataset):
         image /= 255.
         if self.transforms:
             image = self.transforms(image=image)['image']
-            
         return {
             "image": image,
             "targets": torch.tensor(target, dtype=torch.long),

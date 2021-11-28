@@ -264,3 +264,4 @@ tantum/examples/vision/lightning_logs/
 
 tantum/examples/vision/.logs/
 tantum/examples/vision/wandb/
+tantum/examples/vision/stl10/

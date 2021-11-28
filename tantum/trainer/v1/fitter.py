@@ -8,9 +8,9 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, CosineAnnealin
 from torch.optim.swa_utils import AveragedModel, SWALR
 
 from tantum.utils.augmentation import cutmix, fmix
-from tantum.scheduler.scheduler import  get_scheduler, GradualWarmupSchedulerV2
+from tantum.scheduler import  get_scheduler, GradualWarmupSchedulerV2
 from tantum.utils.metrics import get_score
-from tantum.utils.loss import get_criterion
+from tantum.loss import get_criterion
 from tantum.utils.logger import LOGGER
 from tantum.utils.metrics import AverageMeter, timeSince
 

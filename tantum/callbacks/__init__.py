@@ -5,3 +5,4 @@ from .tensorboard import TensorBoardLogger
 from .out_of_fold import OutOfFold
 from .checkpoint import Checkpoint
 from .wboard import WeightAndBiasesCallback
+from .plot_err_acc import PlotErrAcc

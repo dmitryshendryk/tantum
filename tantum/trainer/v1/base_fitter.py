@@ -10,6 +10,8 @@ from tantum.utils.metrics import get_score
 from tantum.callbacks import CallbackRunner
 from tantum.utils import AverageMeter
 
+
+
 from tqdm.auto import tqdm
 
 from tqdm import tqdm
@@ -65,6 +67,12 @@ class Model(nn.Module):
         self.valid_folds = None
         self.target_size = None
         self.fold = None
+
+        ## history metrics
+        self.history_mertrics = {}
+        self.history_mertrics["train"] = {'err':[], 'acc':[]}
+        self.history_mertrics["valid"] = {'err':[], 'acc':[]}
+        self.history_mertrics["test"] =  {'err':[], 'acc':[]}
 
 
 
@@ -229,6 +237,10 @@ class Model(nn.Module):
         self.metrics[self._model_state.value]["loss"] = losses.avg
 
     def train_one_epoch(self, data_loader, epoch):
+        ## history metrics
+        acc = []
+        err = []
+
         self.train()
         self.model_state = enums.ModelState.TRAIN
         losses = AverageMeter()
@@ -256,6 +268,14 @@ class Model(nn.Module):
                 tk0.set_description('Train Epoch {}'.format(str(epoch)))
             if self.using_tpu:
                 print(f"train step: {self.current_train_step} loss: {losses.avg}")
+        
+            err.append(losses.avg)
+            acc.append(metrics['accuracy'])
+
+        ## Save history metrics for later usage
+        self.history_mertrics['train']['err'].append(np.mean(err))
+        self.history_mertrics['train']['acc'].append(np.mean(acc))
+
         if not self.using_tpu:
             tk0.close()
         self.update_metrics(losses=losses, monitor=monitor)
@@ -264,8 +284,13 @@ class Model(nn.Module):
     def validate_one_epoch(self, data_loader, epoch):
         self.eval()
         
+        ## oof array
         trues = []
         preds = []
+
+        ## history metrics
+        acc = []
+        err = []
 
         self.model_state = enums.ModelState.VALID
         losses = AverageMeter()
@@ -282,6 +307,8 @@ class Model(nn.Module):
             trues.append(data['targets'].to('cpu').numpy())
             preds.append(output.softmax(1).to('cpu').numpy())
 
+            
+
             self.train_state = enums.TrainingState.VALID_STEP_END
             losses.update(loss.item(), data_loader.batch_size)
             if b_idx == 0:
@@ -294,6 +321,10 @@ class Model(nn.Module):
                 tk0.set_postfix(loss=losses.avg, stage="valid", **monitor)
                 tk0.set_description('Valid Epoch {}'.format(epoch))
             self.current_valid_step += 1
+        
+            err.append(losses.avg)
+            acc.append(metrics['accuracy'])
+        
         if not self.using_tpu:
             tk0.close()
         self.update_metrics(losses=losses, monitor=monitor)
@@ -307,9 +338,11 @@ class Model(nn.Module):
         self.predictions[self._model_state.value]['valid_labels'] = self.valid_labels
         self.predictions[self._model_state.value]['valid_folds'] = self.valid_folds
 
-        # score = get_score(self.valid_labels, predictions.argmax(1))
-        # print(score)
-        
+        ## Save history metrics for later usage
+        self.history_mertrics['valid']['err'].append(np.mean(err))
+        self.history_mertrics['valid']['acc'].append(np.mean(acc))
+
+
         return losses.avg
 
     def process_output(self, output):
