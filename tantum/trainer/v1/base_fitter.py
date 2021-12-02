@@ -304,8 +304,8 @@ class Model(nn.Module):
                 output, loss, metrics = self.validate_one_step(data)
             
             ### Save preds and labels to create OOF
-            trues.append(data['targets'].to('cpu').numpy())
-            preds.append(output.softmax(1).to('cpu').numpy())
+            # trues.append(data['targets'].to('cpu').numpy())
+            # preds.append(output.softmax(1).to('cpu').numpy())
 
             
 
@@ -329,14 +329,14 @@ class Model(nn.Module):
             tk0.close()
         self.update_metrics(losses=losses, monitor=monitor)
         
-        trues = np.concatenate(trues)
-        predictions = np.concatenate(preds)
+        # trues = np.concatenate(trues)
+        # predictions = np.concatenate(preds)
         
         ## Later usage of preds and labels in callbacks
-        self.predictions[self._model_state.value]['preds'] = predictions
-        self.predictions[self._model_state.value]['labels'] = trues
-        self.predictions[self._model_state.value]['valid_labels'] = self.valid_labels
-        self.predictions[self._model_state.value]['valid_folds'] = self.valid_folds
+        # self.predictions[self._model_state.value]['preds'] = predictions
+        # self.predictions[self._model_state.value]['labels'] = trues
+        # self.predictions[self._model_state.value]['valid_labels'] = self.valid_labels
+        # self.predictions[self._model_state.value]['valid_folds'] = self.valid_folds
 
         ## Save history metrics for later usage
         self.history_mertrics['valid']['err'].append(np.mean(err))

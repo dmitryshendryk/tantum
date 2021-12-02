@@ -1,70 +1,59 @@
 import torch 
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
+    
+class Attention(nn.Module):
+    def __init__(self, mem_in=32, query_in=32, key_size=32, output_size=32):
+        super(Attention, self).__init__()
+        self.key = nn.Conv1d(mem_in, key_size, 1, padding=0)
+        self.value = nn.Conv1d(mem_in, output_size, 1, padding=0)
+        self.query = nn.Conv1d(query_in, key_size, 1, padding=0)
+        self.key_size = key_size
 
-
-class ScaledDotProductAttention(nn.Module):
-    ''' Scaled Dot-Product Attention '''
-    def __init__(self, temperature, attn_dropout=0.0):
-        super().__init__()
-        self.temperature = temperature
-        self.dropout = nn.Dropout(attn_dropout)
-
-    def forward(self, q, k, v, mask=None):
-        attn = torch.matmul(q / self.temperature, k.transpose(2, 3))
-        if mask is not None:
-            attn = attn.masked_fill(mask == 0, -1e9)
-        attn = self.dropout(F.softmax(attn, dim=-1))
-        output = torch.matmul(attn, v)
-        return output, attn
+    def forward(self, x1, x2):
+        queries = self.query(x1)  # Batch x Values x Keys
+        keys = self.key(x2)  # Batch x Keysize x Keys
+        values = self.value(x2)  # Batch x Values x Keys
+        u = torch.sum(queries.unsqueeze(2) * keys.unsqueeze(3), 1)/np.sqrt(self.key_size)
+        w = F.softmax(u, dim=1)
+        out = torch.sum(w.unsqueeze(1) * values.unsqueeze(3), 2)
+        return out, w
 
 class MultiHeadAttention(nn.Module):
-    ''' Multi-Head Attention module '''
-    def __init__(self, n_head, d_model, d_k, d_v, dropout=0.1):
-        super().__init__()
-        self.n_head = n_head
-        self.d_k = d_k
-        self.d_v = d_v
+    def __init__(self, mem_in=32, query_in=32, key_size=32, output_size=32, num_heads=4):
+        super(MultiHeadAttention, self).__init__()
+        self.layers = nn.ModuleList([Attention(mem_in, query_in, key_size, output_size) for i in range(num_heads)])
+        self.proj_down = nn.Conv1d(num_heads*output_size, query_in, 1, padding=0)
+        self.mixing_layer1 = nn.Conv1d(query_in, query_in, 1, padding=0)
+        self.mixing_layer2 = nn.Conv1d(query_in, query_in, 1, padding=0)
+        self.norm1 = nn.LayerNorm(query_in)
+        self.norm2 = nn.LayerNorm(query_in)
 
-        self.w_qs = nn.Linear(d_model, n_head * d_k, bias=False)
-        self.w_ks = nn.Linear(d_model, n_head * d_k, bias=False)
-        self.w_vs = nn.Linear(d_model, n_head * d_v, bias=False)
-        self.fc = nn.Linear(n_head * d_v, d_model, bias=False)
+    def forward(self, query, context):
+        x1 = query.reshape(query.size(0), query.size(1), -1)
+        x2 = context.reshape(context.size(0), context.size(1), -1)
 
-        self.attention = ScaledDotProductAttention(temperature=d_k ** 0.5)
+        # Apply attention for each head
+        z1, ws = [], []
+        for i in range(len(self.layers)):
+            z, w = self.layers[i](x1, x2)
+            z1.append(z)
+            ws.append(w)
+        z1 = torch.cat(z1, 1)
 
-        self.dropout = nn.Dropout(dropout)
-        self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
+        # Project down. Layer norm is a bit fiddly here - it wants the dimensions to normalize over to be the last dimensions
+        z2 = self.norm1((self.proj_down(z1) + x2).transpose(1, 2).contiguous()).transpose(1, 2).contiguous()
 
-    def forward(self, q, k, v, mask=None):
-        d_k, d_v, n_head = self.d_k, self.d_v, self.n_head
-        sz_b, len_q, len_k, len_v = q.size(0), q.size(1), k.size(1), v.size(1)
-        residual = q
+        # Mixing layer
+        z3 = self.norm2((self.mixing_layer2(F.relu(self.mixing_layer1(
+            z2))) + z2).transpose(1, 2).contiguous()).transpose(1, 2).contiguous()
 
-        # Pass through the pre-attention projection: b x lq x (n*dv)
-        # Separate different heads: b x lq x n x dv
-        q = self.w_qs(q).view(sz_b, len_q, n_head, d_k)
-        k = self.w_ks(k).view(sz_b, len_k, n_head, d_k)
-        v = self.w_vs(v).view(sz_b, len_v, n_head, d_v)
+        if len(query.size()) == 4:
+            z3 = z3.reshape(query.size(0), query.size(1), query.size(3), query.size(3))        
 
-        # Transpose for attention dot product: b x n x lq x dv
-        q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
-
-        if mask is not None:
-            mask = mask.unsqueeze(1)   # For head axis broadcasting.
-        q, attn = self.attention(q, k, v, mask=mask)
-
-        # Transpose to move the head dimension back: b x lq x n x dv
-        # Combine the last two dimensions to concatenate all the heads together: b x lq x (n*dv)
-        q = q.transpose(1, 2).contiguous().view(sz_b, len_q, -1)
-        q = self.dropout(self.fc(q))
-        q += residual
-
-        q = self.layer_norm(q)
-
-        return q, attn
-
-
+        return z3, z1
+        
 
 # query = torch.rand(128, 256, 24, 24)
 # query_ = torch.reshape(query, (query.size(0), -1 , query.size(1)))

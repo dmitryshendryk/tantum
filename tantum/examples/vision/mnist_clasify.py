@@ -84,7 +84,6 @@ class MnistModel(Model):
             # image, image_labels = fmix(image, targets, alpha=1., decay_power=5., shape=(28,28))
             
         outputs = self.model(image.float())
-
         if targets is not None:
             
             if Config.use_cutmix and mix_decision < 0.25:
@@ -92,9 +91,7 @@ class MnistModel(Model):
                 metrics = self.monitor_metrics(outputs, image_labels[0])
                 return outputs, loss, metrics
             else:
-                print(outputs)
-                print(targets)
-                exit(0)
+                
                 loss = self.loss_fn(outputs, targets)
                 metrics = self.monitor_metrics(outputs, targets)
             
